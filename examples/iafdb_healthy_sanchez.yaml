@@ -1,0 +1,27 @@
+# IAFDB healthy-segment bank — Sánchez 2021 sinus-rhythm convention.
+#
+# Emits segments whose calibrated peak-to-peak >= 0.5 mV (the
+# canonical clinical threshold for sinus-rhythm healthy atrial
+# tissue, cf. Marchlinski 2000 and Sanders 2003). Note that IAFDB is
+# AF-rhythm data; the 0.5 mV cutoff is stricter than the Kosiuk
+# AF-adjusted 0.2 mV default and yields fewer segments — useful for
+# directly comparing against literature that uses the sinus-rhythm
+# convention.
+
+data:
+  data_dir: ../data/iafdb
+  output:   ../banks/iafdb_healthy_sanchez.h5
+
+format:
+  type: iafdb
+
+threshold:
+  mode:  absolute
+  value: 0.5                                           # Sánchez 2021 sinus-rhythm convention
+
+windowing:
+  window_ms: 512.0
+  hop_ms:    256.0
+
+calibration:
+  target_qrs_pp_mv: 1.0

@@ -1,0 +1,24 @@
+# IAFDB pretraining bank — unfiltered export.
+#
+# Keeps every windowed segment regardless of amplitude. Maps to the
+# iafdb_bank schema 1.1 `threshold_mode = "none"` enum value. Use for
+# self-supervised pretext objectives where label semantics don't
+# gate selection — the model gets maximum exposure to the IAFDB
+# distribution.
+
+data:
+  data_dir: ../data/iafdb
+  output:   ../banks/iafdb_pretrain_v1.h5
+
+format:
+  type: iafdb
+
+threshold:
+  mode: none                                            # no selection; every window kept
+
+windowing:
+  window_ms: 512.0
+  hop_ms:    256.0
+
+calibration:
+  target_qrs_pp_mv: 1.0

@@ -1,0 +1,39 @@
+# IAFDB healthy-segment bank — default Kosiuk AF-adjusted threshold.
+#
+# Pulls every IAFDB record from `data/iafdb/` and emits an
+# `iafdb_bank.h5` of segments whose calibrated peak-to-peak amplitude
+# is >= 0.2 mV (Kosiuk PMID 30873619 — adjusted for AF rhythms vs the
+# 0.5 mV Sánchez/Marchlinski sinus-rhythm convention).
+#
+# Paths in this file are resolved relative to the YAML's directory.
+# Use this as a starting point for sinus-rhythm or percentile-based
+# variants; see iafdb_healthy_sanchez.yaml and others alongside.
+
+data:
+  data_dir: ../data/iafdb                              # PhysioNet IAFDB download root
+  output:   ../banks/iafdb_healthy_v1.h5               # bank destination (HDF5)
+
+# Output format. 'iafdb' (default) writes only the iafdb_bank.
+# 'classifier' also writes a sibling ClassifierBank.h5 — see
+# iafdb_classifier.yaml for that flow.
+format:
+  type: iafdb
+
+# Selection strategy. 'absolute' compares calibrated peak-to-peak in mV.
+# Use 'percentile' (0..100) for scale-invariant selection, or 'none' for
+# unfiltered exports (every windowed segment).
+threshold:
+  mode:  absolute                                      # 'absolute' / 'percentile' / 'none'
+  value: 0.2                                           # mV cutoff (Kosiuk-adjusted for AF)
+
+# Sliding-window length and stride in milliseconds. 512 ms matches the
+# classifier's T=512 input at 1 kHz; 256 ms hop is 50% overlap.
+windowing:
+  window_ms: 512.0
+  hop_ms:    256.0
+
+# R-wave-anchored calibration target (mV). Each per-record scalar
+# brings the median QRS peak-to-peak to this value on the chosen
+# surface ECG lead.
+calibration:
+  target_qrs_pp_mv: 1.0
