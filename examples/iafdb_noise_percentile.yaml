@@ -1,0 +1,39 @@
+# IAFDB noise bank — default percentile strategy.
+#
+# Keeps windows whose peak-to-peak is at or below the 20th percentile
+# of each record's pooled distribution. Scale-invariant (no
+# calibration required), which is the right choice for IAFDB because
+# the recorded signals are uncalibrated.
+#
+# Produces a pair of files:
+#   ../banks/iafdb_noise_v1.h5              — the bank (consumed by mixer)
+#   ../banks/iafdb_noise_v1_run_record.json — provenance sidecar
+#
+# The mixer in synthetic-egm-pipeline opens the HDF5; auditing tools
+# and the white paper's methods section open the JSON.
+
+data:
+  data_dir: ../data/iafdb
+  output:   ../banks/iafdb_noise_v1.h5
+  # run_record_output is optional; defaults to <output>.stem + "_run_record.json"
+  # next to the bank. Override only if you want a non-adjacent JSON.
+  # run_record_output: ../banks/iafdb_noise_v1_run_record.json
+
+# Keep-below threshold (the noise side). 'percentile' is recommended
+# for uncalibrated input. Use 'absolute' only if the records are
+# pre-calibrated and you want a true mV cutoff.
+threshold:
+  mode:  percentile                                     # 'percentile' or 'absolute'
+  value: 20.0                                           # 0..100; lower = quieter
+
+# Sliding-window length and stride. Shorter than healthy-segment
+# extraction (200 ms vs 512 ms): noise segments feed the mixer, which
+# tiles them to fit the synthetic trace length, so smaller chunks
+# give more variety per record.
+windowing:
+  window_ms: 200.0
+  hop_ms:    100.0
+
+description: >
+  IAFDB noise bank (20th percentile, 200 ms windows). Used by the
+  synthetic-EGM mixer to additively color clean simulated traces.

@@ -1,16 +1,22 @@
 # ---------------------------------------------------------------------------
-# pyproject.toml — myocard-labs python template
+# pyproject.toml — myocard-iafdb-pipeline
 #
-# Find/replace before publishing:
-#   myocard-package-name   → PyPI distribution name (dash-separated, with myocard- prefix)
-#   myocard_package_name   → Python import name (underscore-separated)
-#   PACKAGE_DESCRIPTION    → one-line summary used by PyPI
-#   GITHUB_REPO_NAME       → bare repo name (no myocard- prefix)
+# PhysioNet IAFDB download + preprocessing producer for the myocard-labs
+# intracardiac-EGM stack. Produces three on-disk bank artifacts (all schema'd
+# in myocard-egm-contracts):
 #
-# Convention recap (LOCKED-IN 2026-06-13, see intracardiac-platform/project/refactor_checklist.md):
-#   GitHub repo  : egm-contracts                  (bare)
-#   PyPI dist    : myocard-egm-contracts          (myocard- prefix)
-#   Import name  : myocard_egm_contracts          (underscore)
+#   - iafdb_bank.h5            : healthy / pretraining / all-segment HDF5 banks
+#   - noise_bank.h5            : low-amplitude windows for the synthetic mixer
+#   - noise_bank_run_record.json: sidecar provenance for the noise bank
+#
+# All bank-writing goes through myocard-egm-data; this package owns the
+# IAFDB-specific download + load + calibration + segmentation logic, plus
+# the CLIs that orchestrate the producer pipeline.
+#
+# Convention recap:
+#   GitHub repo  : iafdb-pipeline                  (bare)
+#   PyPI dist    : myocard-iafdb-pipeline          (myocard- prefix)
+#   Import name  : myocard_iafdb_pipeline          (underscore)
 # ---------------------------------------------------------------------------
 
 [build-system]
@@ -18,16 +24,25 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "myocard-package-name"
-version = "0.1.0"
-description = "PACKAGE_DESCRIPTION"
+name = "myocard-iafdb-pipeline"
+version = "0.2.0"
+description = "PhysioNet IAFDB download + preprocessing producer. Writes iafdb_bank, noise_bank, and noise_bank_run_record artifacts consumable by myocard-egm-classifier and synthetic-egm-pipeline."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [
   { name = "Daniel Klein", email = "daniel.anthony.klein.88@gmail.com" },
 ]
-keywords = ["cardiac", "electrophysiology", "signal-processing", "egm"]
+keywords = [
+  "cardiac",
+  "electrophysiology",
+  "signal-processing",
+  "egm",
+  "intracardiac",
+  "atrial-fibrillation",
+  "physionet",
+  "iafdb",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
@@ -41,38 +56,67 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 
+# Runtime deps. The bank-writing path is owned by myocard-egm-data; the
+# schemas live in myocard-egm-contracts (and come in transitively via
+# egm-data). h5py is NOT pulled in directly — egm-data carries it.
 dependencies = [
-  # Runtime deps go here. Keep this lean. Common floor: numpy + h5py.
-  # "numpy>=1.26",
-  # "h5py>=3.10",
+  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.2.0",
+  "myocard-egm-data @ git+https://github.com/myocard-labs/egm-data.git@v0.2.0",
+  "myocard-egm-signal @ git+https://github.com/myocard-labs/egm-signal.git@v0.1.0",
+  "numpy>=1.26",
+  "wfdb>=4.1.2",
+  "tqdm>=4.65",
+  # YAML is the project-wide config format (matches egm-classifier).
+  # PyYAML is the de-facto reader; tests + mypy use the bundled types.
+  "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
   "pytest-cov>=5.0",
-  "ruff>=0.6.0",
-  "mypy>=1.10",
+  # ruff and mypy pinned to exact versions (matching egm-contracts +
+  # egm-data) so local dev, CI, and the pre-commit hook all run the
+  # same binary. Bumping ruff or mypy means updating this line,
+  # .pre-commit-config.yaml, and ci.yml together.
+  "ruff==0.15.17",
+  "mypy==2.1.0",
   "pre-commit>=3.7",
   "nbstripout>=0.7",
+  # Type stubs for PyYAML so mypy strict-checks the config loader.
+  "types-PyYAML>=6.0",
 ]
 
 [project.urls]
-Homepage      = "https://github.com/myocard-labs/GITHUB_REPO_NAME"
-Repository    = "https://github.com/myocard-labs/GITHUB_REPO_NAME"
-Issues        = "https://github.com/myocard-labs/GITHUB_REPO_NAME/issues"
+Homepage      = "https://github.com/myocard-labs/iafdb-pipeline"
+Repository    = "https://github.com/myocard-labs/iafdb-pipeline"
+Issues        = "https://github.com/myocard-labs/iafdb-pipeline/issues"
 Organization  = "https://github.com/myocard-labs"
 
-# Optional CLI entry points — uncomment + edit when the package ships commands.
-# [project.scripts]
-# myocard-foo = "myocard_package_name.cli:main"
+[project.scripts]
+iafdb-download         = "myocard_iafdb_pipeline.cli.download_cmd:main"
+iafdb-inspect          = "myocard_iafdb_pipeline.cli.inspect_cmd:main"
+iafdb-export-bank      = "myocard_iafdb_pipeline.cli.export_bank_cmd:main"
+iafdb-export-noise-bank = "myocard_iafdb_pipeline.cli.export_noise_bank_cmd:main"
 
 # ---------------------------------------------------------------------------
 # Hatch
 # ---------------------------------------------------------------------------
 
+# Hatchling refuses direct URL references in dependencies by default; we
+# need it during pre-1.0 iteration so we can pin myocard-egm-contracts +
+# myocard-egm-data to git tags. Drop this once everything ships on
+# (Test)PyPI.
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/myocard_package_name"]
+packages = ["src/myocard_iafdb_pipeline"]
+# Ship py.typed so downstream consumers (and CI mypy) can type-check
+# imports from this package without an ignore-missing-imports override.
+artifacts = [
+  "src/myocard_iafdb_pipeline/py.typed",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -113,6 +157,15 @@ ignore = [
 "tests/**/*.py" = ["B011"]
 "__init__.py"   = ["F401"]
 
+# Pin isort groups so local + CI agree on first-party vs third-party
+# attribution. Without this, ruff's auto-detection can put
+# myocard_egm_contracts / myocard_egm_data in the same group locally
+# but a different group in CI. Lock the convention here (matching the
+# egm-data setup).
+[tool.ruff.lint.isort]
+known-first-party = ["myocard_iafdb_pipeline"]
+known-third-party = ["myocard_egm_contracts", "myocard_egm_data", "myocard_egm_signal"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
@@ -132,12 +185,14 @@ addopts = [
 ]
 filterwarnings = [
   "error",
-  # Add per-package allowlist below as needed, e.g.:
-  # "ignore::DeprecationWarning:some_third_party_lib",
+  # wfdb / scipy occasionally surface harmless deprecation warnings; let
+  # them through rather than crash the suite on third-party churn.
+  "ignore::DeprecationWarning",
+  "ignore::PendingDeprecationWarning",
 ]
 
 [tool.coverage.run]
-source = ["src/myocard_package_name"]
+source = ["src/myocard_iafdb_pipeline"]
 branch = true
 
 [tool.coverage.report]
@@ -161,17 +216,29 @@ warn_unused_ignores = true
 disallow_untyped_defs = true
 no_implicit_optional = true
 show_error_codes = true
-files = ["src", "tests"]
+# Strict-check production code only. The tests/ tree was inherited from
+# the legacy iafdb_pipeline repo without parameter annotations, and
+# strict-annotating ~30 inherited test fixtures is not blocking the
+# v0.2.0 polyrepo refactor. Pytest still asserts behavior; the tests
+# round-trip every producer output through the egm-contracts validator
+# so format-level correctness is exercised. Annotating the test fixtures
+# is good follow-up work for a future PR.
+files = ["src"]
 
-# Per-module overrides for libraries without type stubs.
-# Uncomment + edit when the package starts importing one of these.
-# Listing them here when the imports aren't present triggers
-# `warn_unused_configs` and clutters the mypy output.
-#
-# [[tool.mypy.overrides]]
-# module = [
-#   "h5py.*",
-#   "scipy.*",
-#   "matplotlib.*",
-# ]
-# ignore_missing_imports = true
+# wfdb + tqdm ship without complete inline stubs; ignore-missing
+# silences these third-party hops without losing strict checking on our
+# own code. myocard-egm-contracts, myocard-egm-data, and
+# myocard-egm-signal all ship py.typed and are NOT in this override list.
+[[tool.mypy.overrides]]
+module = [
+  "wfdb.*",
+  "tqdm.*",
+]
+ignore_missing_imports = true
+
+# Tests inherited from the legacy iafdb_pipeline repo predate strict
+# annotation conventions. Relax disallow_untyped_defs for tests/*
+# so the production src/ tree stays strict-checked while we ship v0.2.0.
+# Annotating every fixture parameter is good follow-up work but not
+# blocking the polyrepo refactor — the tests still run, assert
+# correctness, and exercise the v0.2.0 contracts with egm-data.

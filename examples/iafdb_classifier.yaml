@@ -1,0 +1,31 @@
+# IAFDB + ClassifierBank pair — Kosiuk threshold, all-healthy label policy.
+#
+# Same selection as iafdb_healthy_default.yaml, but also writes a
+# sibling ClassifierBank.h5 with every segment labeled 0 (healthy).
+# The classifier-format output runs through egm-data's
+# `iafdb_bank_to_classifier()` with the chosen label_fn — labeling
+# is consumer-side policy, so the producer requires it to be set
+# explicitly.
+
+data:
+  data_dir: ../data/iafdb
+  output:   ../banks/iafdb_healthy_v1.h5               # the iafdb_bank.h5 still gets written
+
+format:
+  type: classifier                                      # also writes ClassifierBank.h5
+  label_policy: all-healthy                             # every IAFDB trace labeled 0
+  # classifier_output is optional; defaults to <output>.classifier.h5
+  # next to the iafdb bank. Set explicitly if you want a different
+  # location:
+  # classifier_output: ../banks/iafdb_healthy_v1.classifier.h5
+
+threshold:
+  mode:  absolute
+  value: 0.2
+
+windowing:
+  window_ms: 512.0
+  hop_ms:    256.0
+
+calibration:
+  target_qrs_pp_mv: 1.0

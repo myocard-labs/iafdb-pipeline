@@ -1,0 +1,27 @@
+# IAFDB noise bank — conservative absolute threshold.
+#
+# Keeps windows whose peak-to-peak is at or below 0.05 mV, matching
+# Sanders 2003's "electrically silent" tier for atrial bipolar EGM.
+# Requires the input records to be calibrated (this producer does
+# NOT calibrate the noise side — see project/architecture.md);
+# uncalibrated input + absolute threshold either keeps everything
+# (raw signal small) or nothing (raw signal large).
+#
+# Prefer iafdb_noise_percentile.yaml unless you have a specific
+# clinical reason to use an absolute mV cutoff.
+
+data:
+  data_dir: ../data/iafdb
+  output:   ../banks/iafdb_noise_silent.h5
+
+threshold:
+  mode:  absolute
+  value: 0.05                                           # mV; Sanders 2003 silent tier
+
+windowing:
+  window_ms: 200.0
+  hop_ms:    100.0
+
+description: >
+  IAFDB noise bank — Sanders 2003 'electrically silent' tier
+  (peak-to-peak <= 0.05 mV). Requires calibrated input.
