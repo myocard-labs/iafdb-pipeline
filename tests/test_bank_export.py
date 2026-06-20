@@ -228,17 +228,20 @@ def test_export_noise_bank_absolute_records_provenance(
     )
 
     record = load_noise_bank_run_record(result.run_record_path)
-    assert record["schema_version"] == "1.0"
+    # As of egm-data v0.3.0, load_noise_bank_run_record returns a typed
+    # NoiseBankRunRecord Pydantic model, so the assertions use attribute
+    # access (the SchemaVersion + ThresholdMode enums expose .value).
+    assert record.schema_version.value == "1.0"
     # Producer extracts from raw signal — calibration is honestly 'none'.
-    assert record["calibration"]["method"] == "none"
-    assert record["calibration"]["target_qrs_pp_mv"] is None
-    assert record["selection"]["threshold_mode"] == "absolute"
-    assert record["selection"]["threshold_value"] == 0.5
+    assert record.calibration.method == "none"
+    assert record.calibration.target_qrs_pp_mv is None
+    assert record.selection.threshold_mode.value == "absolute"
+    assert record.selection.threshold_value == 0.5
     # When the bank is non-empty the producer writes per_trace_provenance
     # — every paper-citable bank should have it.
     if result.n_segments > 0:
-        assert "per_trace_provenance" in record
-        assert len(record["per_trace_provenance"]["patient_id"]) == result.n_segments
+        assert record.per_trace_provenance is not None
+        assert len(record.per_trace_provenance.patient_id) == result.n_segments
 
 
 def test_export_noise_bank_overwrite_guard(synthetic_record: IAFDBRecord, tmp_path: Path) -> None:
