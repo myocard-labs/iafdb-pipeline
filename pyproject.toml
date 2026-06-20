@@ -25,7 +25,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "myocard-iafdb-pipeline"
-version = "0.2.0"
+version = "0.2.1"
 description = "PhysioNet IAFDB download + preprocessing producer. Writes iafdb_bank, noise_bank, and noise_bank_run_record artifacts consumable by myocard-egm-classifier and synthetic-egm-pipeline."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -60,8 +60,8 @@ classifiers = [
 # schemas live in myocard-egm-contracts (and come in transitively via
 # egm-data). h5py is NOT pulled in directly — egm-data carries it.
 dependencies = [
-  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.2.0",
-  "myocard-egm-data @ git+https://github.com/myocard-labs/egm-data.git@v0.2.0",
+  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.3.0",
+  "myocard-egm-data @ git+https://github.com/myocard-labs/egm-data.git@v0.3.0",
   "myocard-egm-signal @ git+https://github.com/myocard-labs/egm-signal.git@v0.1.0",
   "numpy>=1.26",
   "wfdb>=4.1.2",
