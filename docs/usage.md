@@ -206,7 +206,7 @@ The bank lands at `../banks/iafdb_healthy_v1.h5` (relative to the example config
 iafdb-export-bank examples/iafdb_classifier.yaml
 ```
 
-Two files come out: the iafdb_bank.h5 and the labeled ClassifierBank.h5. The ClassifierBank is what egm-classifier consumes during the hybrid eval; the iafdb_bank is the producer's primary artifact and stays around as the canonical record.
+Two files come out: the iafdb_bank.h5 and the labeled ClassifierBank.h5. The ClassifierBank is what egm-classifier loads when running the trained model over IAFDB segments; the iafdb_bank is the producer's primary artifact and stays around as the canonical record.
 
 ### Producing a pretraining bank (no threshold)
 

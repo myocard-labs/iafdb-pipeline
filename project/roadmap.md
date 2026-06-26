@@ -37,11 +37,13 @@ myocard-egm-signal     @ git+...@v0.1.0
 
 ## v0.3.0+ — concrete next steps
 
-These are sized for "could land in one focused PR each." Order is
-suggestive; pick by what the classifier or the synthetic mixer needs
-next.
+These are sized for "could land in one focused PR each." Items
+scheduled into cross-cutting Phase work in the meta repo's
+`project_plan.md` carry a `→ tracked at intracardiac-platform Phase X`
+annotation; the rest are component-internal — add when a consumer
+needs them.
 
-### Per-record audit reports
+### Per-record audit reports — Phase 1.5
 
 The producer currently prints a one-line summary on exit ("N segments,
 M records contributing, etc."). For the white paper's methods section
@@ -51,6 +53,8 @@ threshold actually applied (post per-record-percentile resolution),
 number of windows kept vs rejected, and the surface lead that won
 the priority-order selection. Likely lands as an optional
 `--report PATH` flag emitting a JSON sidecar next to the bank.
+
+> → Tracked at `intracardiac-platform/project/project_plan.md` Phase 1.5. Diagnostic data is useful during the synthetic-vs-IAFDB feature comparison work (per-record outlier hunts) as well as later for paper methods sections.
 
 ### Additional label policies
 
@@ -68,6 +72,7 @@ Plausible additions in priority order:
 - **`patient-id-as-label`** — for patient-discrimination probes that
   test whether the classifier is using a patient-identity shortcut
   vs a generalizable fibrosis signal.
+  > → Tracked at `intracardiac-platform/project/project_plan.md` Phase 1.5 (shortcut-hunt diagnostic).
 
 The signature is fixed (a callable taking a Pydantic `IafdbBank` and
 returning `(labels, labels_dict)`), so adding a policy is a
@@ -94,48 +99,66 @@ record and applies the scalar before windowing if present, and the
 run record's `calibration_method` flips from `none` to
 `r_wave_anchoring`.
 
-### Multi-beat extraction
+### Multi-beat extraction — Phase 5 (CLOCS pretraining)
 
-The current extractor emits fixed-window slices. The classifier's
-Phase 2 multi-beat work needs N-consecutive-beat extraction units
-where each unit aligns on a QRS annotation. That's a new egm-signal
-extractor (`extraction.multi_beat`); this repo just calls it once
-it's there.
+The current extractor emits fixed-window slices. The multi-beat
+extraction primitive (`extraction.multi_beat`) lives in egm-signal;
+this repo wires it in.
 
-### A second dataset producer (CFAE / Bordeaux)
+> → Tracked at `intracardiac-platform/project/project_plan.md` Phase 5 (CLOCS-style self-supervised pretraining). Note: previous wording said "classifier's Phase 2" or "Phase 4 multi-beat classification" — both wrong destinations for iafdb-pipeline specifically. IAFDB has no fibrosis ground truth (per [[project-iafdb-eval-catch22]]) so it'll never be a labeled train/test set; the only consumer of multi-beat IAFDB extraction is the CLOCS pretraining pipeline that needs adjacent-segment training pairs from unlabeled recordings. Phase 4's multi-beat work is purely synthetic-side (PacingTrain in synthetic-egm-pipeline). See [[reference-multi-beat-consensus]] for the broader literature framing.
 
-The repo name (`iafdb-pipeline`) implies IAFDB-only. The plausible
-medium-term extensions (CFAE-annotated datasets from the Bordeaux
-group, or larger contemporary atrial banks) might warrant a sister
-repo (`bordeaux-pipeline`) using egm-signal + egm-data the same way
-this repo does, or might warrant generalizing this repo to a
-multi-dataset producer. The decision point is when the second
-producer lands. The IAFDB-specific pieces (constants, WFDB loader,
-the calibration target choice) make a clean repo split easy.
+### A second dataset producer (open question, no concrete dataset today)
 
-## Schema bumps to coordinate
+The repo name (`iafdb-pipeline`) implies IAFDB-only. If a second
+publicly-available labeled atrial intracardiac EGM dataset ever
+becomes available, the architectural question is whether to:
+
+- Spin up a sister repo (e.g. `<dataset-name>-pipeline`) using
+  egm-signal + egm-data the same way this repo does, or
+- Generalize this repo to a multi-dataset producer.
+
+The IAFDB-specific pieces (constants, WFDB loader, the calibration
+target choice) make a clean repo split easy.
+
+> **Reality check (added 2026-06-23):** as of today, no such second
+> dataset exists that's both publicly available and labeled with
+> fibrosis ground truth — see [[dataset-decision-iafdb]] for why
+> IAFDB was the only viable choice. An earlier version of this
+> section name-dropped CFAE / Bordeaux as a candidate, but research
+> confirmed there's no publicly downloadable EGM dataset from the
+> Haïssaguerre group's CFAE work. Re-evaluate if the field ships
+> something new (e.g. a future CinC dataset challenge release).
+
+## Schema bumps to coordinate — see egm-contracts roadmap
 
 The producer writes `iafdb_bank`, `noise_bank`, and
 `noise_bank_run_record`. Each is pinned to a specific egm-contracts
-version. Schema changes that ship in egm-contracts have to land here
-within the same release cycle, in this order:
+version. The full cascade order (egm-contracts ships first → egm-data
+updates → iafdb-pipeline bumps pins + verifies round-trip → tag and
+release) plus the list of upcoming schema bumps now lives at
+`egm-contracts/project/roadmap.md` (the "Schema bumps to coordinate"
+section there is the source of truth).
 
-1. egm-contracts ships the new schema version.
-2. egm-data updates its writer to satisfy it.
-3. iafdb-pipeline bumps the egm-contracts + egm-data pins and verifies
-   round-trip via the validator.
-4. Tag and release.
+The iafdb-pipeline-side work for each upcoming bump is the same recipe
+each time:
 
-Changes that are likely to land before v1.0:
+1. Bump the `myocard-egm-contracts` and `myocard-egm-data` pins in
+   `pyproject.toml`.
+2. Update any producer-side code that has to satisfy the new schema
+   shape (usually just stamping new attrs or new per-trace columns;
+   the Pydantic model + validator handle the shape correctness).
+3. Round-trip test via `egm-contracts.validators` (already in tests).
+4. Tag + release.
 
-- **`iafdb_bank` 1.2** — add an audit-report sidecar pointer field
-  (`run_record_path`) so the healthy bank also gets a paired JSON,
-  symmetric with the noise side.
-- **`noise_bank` 1.1** — add an optional `calibration_scalar` per-trace
-  column so the opt-in calibration item above can land without a
-  schema breakage.
-- **`noise_bank_run_record` 1.1** — add `per_trace_provenance.lead`
-  for the calibration's chosen surface lead when calibration is on.
+Three upcoming bumps that affect this repo specifically:
+
+- **`iafdb_bank` 1.2** (audit-report sidecar pointer) — pairs with the
+  per-record audit reports work above; ships in the same Phase 1.5
+  release as the producer-side `--report` flag.
+- **`noise_bank` 1.1** (`calibration_scalar` per-trace column) — pairs
+  with the noise-side opt-in calibration work above.
+- **`noise_bank_run_record` 1.1** (`per_trace_provenance.lead`) — same
+  release as `noise_bank` 1.1.
 
 ## Won't-do (out of scope, but documented to save the question)
 
