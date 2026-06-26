@@ -200,7 +200,7 @@ iafdb-export-bank examples/iafdb_healthy_default.yaml
 
 The bank lands at `../banks/iafdb_healthy_v1.h5` (relative to the example config's directory — adjust the YAML if your layout differs). egm-classifier can open it directly via `load_iafdb_bank_as_classifier` with the project's label policy.
 
-### Producing a paired ClassifierBank for sim-to-real eval
+### Producing a paired ClassifierBank for the IAFDB diagnostic
 
 ```bash
 iafdb-export-bank examples/iafdb_classifier.yaml

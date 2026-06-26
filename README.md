@@ -8,13 +8,13 @@ Part of the [myocard-labs](https://github.com/myocard-labs) cardiac signal-proce
 
 ## Why
 
-[PhysioNet IAFDB](https://physionet.org/content/iafdb/1.0.0/) — the Intracardiac Atrial Fibrillation Database — is one of the few openly available intracardiac bipolar EGM datasets. It carries 32 records from 8 patients across 4 catheter placements (SVC, IVC, TVA, AFW), sampled at 1 kHz, with mixed surface-ECG complements per record. It's the in-vivo anchor the myocard-labs project uses for sim-to-real evaluation of the fibrosis classifier.
+[PhysioNet IAFDB](https://physionet.org/content/iafdb/1.0.0/) — the Intracardiac Atrial Fibrillation Database — is one of the few openly available intracardiac bipolar EGM datasets. It carries 32 records from 8 patients across 4 catheter placements (SVC, IVC, TVA, AFW), sampled at 1 kHz, with mixed surface-ECG complements per record. It's the in-vivo anchor the myocard-labs project uses to sanity-check the fibrosis classifier against real recordings — a label-free diagnostic, since IAFDB carries no fibrosis labels to score against.
 
 `myocard-iafdb-pipeline` is the IAFDB-specific producer: it knows about PhysioNet's URL layout, the IAFDB channel conventions, and the dataset's quirks (mixed surface leads, no session timestamps, uncalibrated amplitudes). It hands the resulting calibrated segments to [`myocard-egm-data`](https://github.com/myocard-labs/egm-data) for HDF5 writing, against schemas owned by [`myocard-egm-contracts`](https://github.com/myocard-labs/egm-contracts), using DSP primitives from [`myocard-egm-signal`](https://github.com/myocard-labs/egm-signal).
 
 What this repo does NOT do: HDF5 I/O (egm-data owns it), DSP primitives like filtering / calibration / segment extraction (egm-signal owns them), schema definitions (egm-contracts owns them), or classification (egm-classifier owns it). The split lets the producer stay focused on one job — converting IAFDB into bank-format artifacts that satisfy the project-wide contracts.
 
-Downstream, the resulting banks are consumed by `myocard-egm-classifier` (training + sim-to-real eval) and by `synthetic-egm-pipeline`'s mixer (noise bank → additive noise on clean simulated traces).
+Downstream, the resulting banks are consumed by `myocard-egm-classifier` (training + the label-free IAFDB diagnostic) and by `synthetic-egm-pipeline`'s mixer (noise bank → additive noise on clean simulated traces).
 
 ---
 
