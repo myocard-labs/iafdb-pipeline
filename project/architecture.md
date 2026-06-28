@@ -74,6 +74,7 @@ src/myocard_iafdb_pipeline/
 ├── constants.py            ← IAFDB-specific: patients, placements,
 │                              channels, PhysioNet URL, fs
 ├── download.py             ← PhysioNet mirror
+├── ids.py                  ← stable cross-artifact id derive + validate
 ├── records.py              ← IAFDBRecord dataclass + WFDB loader
 ├── export/
 │   ├── bank_export.py      ← export_bank(...) orchestrator
@@ -310,6 +311,58 @@ schema carries everything inline. If the producer grows enough
 configuration knobs that the schema can't keep up, a healthy-side
 sidecar joins the noise-side one. The boundary will be re-examined
 when that happens.
+
+## Stable cross-artifact IDs
+
+Since v0.3.0 (egm-contracts v0.5.0 / egm-data v0.4.0) every bank the
+producer writes carries a stable cross-artifact ID — an egm-contracts
+`ArtifactId` that the intracardiac-platform phase manifests and the
+future provenance graph key on. The producer is the natural place to
+stamp it: the ID has to be assigned exactly once, at the moment the
+artifact is created, and never reused.
+
+`ids.py` owns the small amount of logic:
+
+- **Role-based derivation.** The default ID encodes the bank's role in
+  its prefix: `tbank_` for a thresholded training bank, `ptbank_` for an
+  unfiltered (`threshold=none`) pretraining bank, `nbank_` for a noise
+  bank. The descriptor segment is the dataset tag (`iafdb`) and the date
+  is the write-time UTC date — e.g. `tbank_iafdb_2026-06-27`. The role
+  follows the threshold because that's the only thing at the producer
+  level that distinguishes a training bank from a pretraining bank;
+  nothing else about the run changes it.
+- **Override.** A caller (or the `data.bank_id` config key) can supply
+  an explicit ID, which is validated and used verbatim. This is the
+  curation path — when a human wants a descriptive, hand-chosen ID.
+- **Single-sourced pattern.** The ID *pattern* lives once in
+  egm-contracts (`common.ArtifactId`); `ids.py` only composes candidate
+  strings and validates them. The validation idiom (construct
+  `common.ArtifactId`, catch `ValidationError`, re-raise as `ValueError`)
+  mirrors how egm-data validates ClassifierBank IDs, so an explicit
+  override fails fast at the producer boundary rather than deep inside a
+  writer.
+
+Where the ID is written differs by bank, matching the schema asymmetry
+above:
+
+- **iafdb_bank:** stamped on the HDF5 root attr `bank_id` (egm-contracts
+  `iafdb_bank` 1.2). When the producer also emits a ClassifierBank, the
+  egm-data converter keys the source-bank entry and every trace by this
+  same ID (it *requires* the source bank to carry one).
+- **noise_bank:** the slim `noise_bank` HDF5 schema was deliberately
+  *not* given an ID field (it carries only what the mixer needs). The ID
+  rides on the `noise_bank_run_record.json` sidecar instead
+  (egm-contracts `noise_bank_run_record` 1.1).
+
+**Known limitation — same-day uniqueness.** The auto-derived default is
+`{role}_iafdb_<date>` with no within-day disambiguator, so two banks of
+the same role exported on the same date derive the same ID. The override
+is the escape hatch for multiple-banks-per-day workflows, and
+`intracardiac-platform/scripts/validate_manifest.py` (Check A.2) catches
+a real duplicate across the project at curation time. If the producer
+ever routinely emits several same-role banks per day, fold a descriptor
+(e.g. the threshold) or a uniqueness suffix into the default — deferred
+until that's a real workflow.
 
 ## How a downstream consumer reads the output
 

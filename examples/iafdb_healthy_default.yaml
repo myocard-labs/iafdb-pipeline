@@ -12,6 +12,7 @@
 data:
   data_dir: ../data/iafdb                              # PhysioNet IAFDB download root
   output:   ../banks/iafdb_healthy_v1.h5               # bank destination (HDF5)
+  # bank_id: tbank_iafdb_healthy_2026-06-27            # optional; auto-derived (tbank_iafdb_<date>) when omitted
 
 # Output format. 'iafdb' (default) writes only the iafdb_bank.
 # 'classifier' also writes a sibling ClassifierBank.h5 — see

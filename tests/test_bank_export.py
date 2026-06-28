@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from myocard_egm_contracts.schema_info import current_version
 from myocard_egm_contracts.validators import (
     validate_iafdb_bank,
     validate_noise_bank,
@@ -231,7 +232,9 @@ def test_export_noise_bank_absolute_records_provenance(
     # As of egm-data v0.3.0, load_noise_bank_run_record returns a typed
     # NoiseBankRunRecord Pydantic model, so the assertions use attribute
     # access (the SchemaVersion + ThresholdMode enums expose .value).
-    assert record.schema_version.value == "1.0"
+    # The schema bumped to 1.1 in the linkage wave (+bank_id); assert
+    # against current_version so a future bump doesn't silently rot this.
+    assert record.schema_version.value == current_version("noise_bank_run_record")
     # Producer extracts from raw signal — calibration is honestly 'none'.
     assert record.calibration.method == "none"
     assert record.calibration.target_qrs_pp_mv is None

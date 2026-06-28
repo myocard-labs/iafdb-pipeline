@@ -61,6 +61,7 @@ def _format_result(result: NoiseBankExportResult, *, threshold_descr: str) -> st
     lines: list[str] = []
     lines.append(f"Wrote noise bank:     {result.bank_path}")
     lines.append(f"Wrote run record:     {result.run_record_path}")
+    lines.append(f"  Bank id:            {result.bank_id}")
     lines.append(f"  N segments:         {result.n_segments}")
     lines.append(f"  Records processed:  {result.n_records_processed}")
     lines.append(f"  Records contributing: {len(result.source_records)}")
@@ -116,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             band_hz=cfg.band_hz,
             run_record_path=cfg.run_record_output,
             description=cfg.description,
+            bank_id=cfg.bank_id,
             overwrite=args.overwrite,
             progress=not args.no_progress,
         )

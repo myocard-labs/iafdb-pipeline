@@ -1,0 +1,25 @@
+# IAFDB noise bank with an explicit, hand-curated stable ID.
+#
+# As with the healthy bank, the noise producer auto-derives the bank's
+# cross-artifact ID (nbank_iafdb_<today>) unless you override it. For
+# the noise bank the ID is recorded on the run-record JSON sidecar —
+# the slim noise_bank HDF5 carries no ID field. Set `data.bank_id`
+# when you want a descriptive ID or produce several noise banks in a
+# day.
+
+data:
+  data_dir: ../data/iafdb
+  output:   ../banks/iafdb_noise_quiet.h5
+  bank_id:  nbank_iafdb_quiet_p20_2026-06-27          # explicit override; recorded on the sidecar
+
+threshold:
+  mode:  percentile
+  value: 20.0                                         # 0..100; lower = quieter
+
+windowing:
+  window_ms: 200.0
+  hop_ms:    100.0
+
+description: >
+  IAFDB noise bank (20th percentile, 200 ms windows) with an explicit
+  stable ID for manifest referencing.

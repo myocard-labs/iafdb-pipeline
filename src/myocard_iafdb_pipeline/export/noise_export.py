@@ -55,6 +55,7 @@ from myocard_iafdb_pipeline.constants import (
     DEFAULT_NOISE_WINDOW_MS,
     SAMPLING_RATE_HZ,
 )
+from myocard_iafdb_pipeline.ids import derive_noise_bank_id, validate_artifact_id
 from myocard_iafdb_pipeline.records import IAFDBRecord
 
 BANK_SOURCE: str = "iafdb v1.0.0"
@@ -67,6 +68,7 @@ class NoiseBankExportResult:
 
     bank_path: Path
     run_record_path: Path
+    bank_id: str
     n_segments: int
     source_records: tuple[str, ...]
     n_records_processed: int
@@ -94,6 +96,7 @@ def export_noise_bank(
     description: str = "",
     overwrite: bool = False,
     progress: bool = False,
+    bank_id: str | None = None,
 ) -> NoiseBankExportResult:
     """Run the noise-bank-export pipeline.
 
@@ -126,6 +129,12 @@ def export_noise_bank(
         (e.g. ``foo_noise.h5`` → ``foo_noise_run_record.json``).
     description
         Free-form note recorded into the run record.
+    bank_id
+        Optional explicit stable cross-artifact id for the noise bank.
+        Recorded on the run-record sidecar (the slim noise_bank HDF5
+        carries no id). When omitted, ``nbank_iafdb_<date>`` is derived
+        at write time. An explicit id is validated against the
+        egm-contracts ArtifactId pattern.
     overwrite
         Replace existing outputs if True.
     progress
@@ -151,6 +160,12 @@ def export_noise_bank(
         run_record_path = Path(run_record_path)
     if run_record_path.exists() and not overwrite:
         raise FileExistsError(f"{run_record_path} already exists; pass overwrite=True to replace.")
+
+    # Resolve the stable id up front (validate an explicit one before the
+    # record sweep). It rides on the run-record sidecar, not the slim HDF5.
+    resolved_bank_id = (
+        validate_artifact_id(bank_id) if bank_id is not None else derive_noise_bank_id()
+    )
 
     window_samples = round(window_ms * 1e-3 * SAMPLING_RATE_HZ)
 
@@ -201,6 +216,7 @@ def export_noise_bank(
     threshold_mode, threshold_value = _threshold_provenance(strategy)
     run_record = build_noise_bank_run_record(
         source=BANK_SOURCE,
+        bank_id=resolved_bank_id,
         fs_hz=float(SAMPLING_RATE_HZ),
         window_ms=float(window_ms),
         window_samples=int(window_samples),
@@ -237,6 +253,7 @@ def export_noise_bank(
     return NoiseBankExportResult(
         bank_path=bank_path,
         run_record_path=run_record_path,
+        bank_id=resolved_bank_id,
         n_segments=len(all_segments),
         source_records=tuple(contributing_records),
         n_records_processed=n_records_processed,

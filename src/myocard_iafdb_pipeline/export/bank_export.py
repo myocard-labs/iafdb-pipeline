@@ -58,6 +58,7 @@ from myocard_egm_signal import (
 )
 
 from myocard_iafdb_pipeline.constants import BIPOLAR_CHANNELS, SAMPLING_RATE_HZ
+from myocard_iafdb_pipeline.ids import derive_iafdb_bank_id, validate_artifact_id
 from myocard_iafdb_pipeline.records import IAFDBRecord
 
 BANK_SOURCE: str = "iafdb v1.0.0"
@@ -81,6 +82,7 @@ class BankExportResult:
     """
 
     output_path: Path
+    bank_id: str
     classifier_path: Path | None
     n_segments: int
     source_records: tuple[str, ...]
@@ -118,6 +120,7 @@ def export_bank(
     output_format: OutputFormat = "iafdb",
     label_fn: Callable[[Any], Any] | None = None,
     classifier_path: Path | str | None = None,
+    bank_id: str | None = None,
 ) -> BankExportResult:
     """Run the bank-export pipeline.
 
@@ -164,6 +167,13 @@ def export_bank(
     classifier_path
         Optional explicit path for the ClassifierBank output. Defaults
         to ``output_path.with_suffix(".classifier.h5")`` when omitted.
+    bank_id
+        Optional explicit stable cross-artifact id to stamp on the bank.
+        When omitted, a default is derived at write time:
+        ``tbank_iafdb_<date>`` for a thresholded bank, or
+        ``ptbank_iafdb_<date>`` for an unfiltered (``NoThreshold``)
+        pretraining bank. An explicit id is validated against the
+        egm-contracts ArtifactId pattern.
 
     Returns
     -------
@@ -182,6 +192,17 @@ def export_bank(
     if output_path.exists() and not overwrite:
         raise FileExistsError(f"{output_path} already exists; pass overwrite=True to replace.")
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Resolve the stable cross-artifact id up front so a malformed explicit
+    # id fails before the (potentially long) record sweep. The role prefix
+    # follows the threshold: an unfiltered export is a pretraining bank
+    # (ptbank_), a thresholded export is a training bank (tbank_).
+    threshold_mode, threshold_value = _threshold_provenance(threshold)
+    resolved_bank_id = (
+        validate_artifact_id(bank_id)
+        if bank_id is not None
+        else derive_iafdb_bank_id(threshold_mode)
+    )
 
     window_samples = round(window_ms * 1e-3 * SAMPLING_RATE_HZ)
 
@@ -229,12 +250,12 @@ def export_bank(
                 all_segments.append(seg)
                 all_scalars.append(cal.scalar)
 
-    # Build the Pydantic model — this is the v0.2.0 hand-off to egm-data.
-    threshold_mode, threshold_value = _threshold_provenance(threshold)
+    # Build the Pydantic model — the hand-off to egm-data.
     pyd_bank = _build_iafdb_bank_model(
         segments=all_segments,
         scalars=all_scalars,
         source_records=tuple(contributing_records),
+        bank_id=resolved_bank_id,
         threshold_mode=threshold_mode,
         threshold_value=threshold_value,
         target_qrs_pp_mv=target_qrs_pp_mv,
@@ -271,6 +292,7 @@ def export_bank(
 
     return BankExportResult(
         output_path=output_path,
+        bank_id=resolved_bank_id,
         classifier_path=cb_path,
         n_segments=len(all_segments),
         source_records=tuple(contributing_records),
@@ -290,6 +312,7 @@ def _build_iafdb_bank_model(
     segments: list[HealthySegment],
     scalars: list[float],
     source_records: tuple[str, ...],
+    bank_id: str,
     threshold_mode: str,
     threshold_value: float | None,
     target_qrs_pp_mv: float,
@@ -309,6 +332,7 @@ def _build_iafdb_bank_model(
     doc: dict[str, Any] = {
         "schema_version": current_version("iafdb_bank"),
         "created_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "bank_id": bank_id,
         "source": BANK_SOURCE,
         "fs_hz": float(SAMPLING_RATE_HZ),
         "trace_duration_ms": float(window_ms),

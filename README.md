@@ -8,13 +8,13 @@ Part of the [myocard-labs](https://github.com/myocard-labs) cardiac signal-proce
 
 ## Why
 
-[PhysioNet IAFDB](https://physionet.org/content/iafdb/1.0.0/) — the Intracardiac Atrial Fibrillation Database — is one of the few openly available intracardiac bipolar EGM datasets. It carries 32 records from 8 patients across 4 catheter placements (SVC, IVC, TVA, AFW), sampled at 1 kHz, with mixed surface-ECG complements per record. It's the in-vivo anchor the myocard-labs project uses for sim-to-real evaluation of the fibrosis classifier.
+[PhysioNet IAFDB](https://physionet.org/content/iafdb/1.0.0/) — the Intracardiac Atrial Fibrillation Database — is one of the few openly available intracardiac bipolar EGM datasets. It carries 32 records from 8 patients across 4 catheter placements (SVC, IVC, TVA, AFW), sampled at 1 kHz, with mixed surface-ECG complements per record. It's the in-vivo anchor the myocard-labs project uses to sanity-check the fibrosis classifier against real recordings — a label-free diagnostic, since IAFDB carries no fibrosis labels to score against.
 
 `myocard-iafdb-pipeline` is the IAFDB-specific producer: it knows about PhysioNet's URL layout, the IAFDB channel conventions, and the dataset's quirks (mixed surface leads, no session timestamps, uncalibrated amplitudes). It hands the resulting calibrated segments to [`myocard-egm-data`](https://github.com/myocard-labs/egm-data) for HDF5 writing, against schemas owned by [`myocard-egm-contracts`](https://github.com/myocard-labs/egm-contracts), using DSP primitives from [`myocard-egm-signal`](https://github.com/myocard-labs/egm-signal).
 
 What this repo does NOT do: HDF5 I/O (egm-data owns it), DSP primitives like filtering / calibration / segment extraction (egm-signal owns them), schema definitions (egm-contracts owns them), or classification (egm-classifier owns it). The split lets the producer stay focused on one job — converting IAFDB into bank-format artifacts that satisfy the project-wide contracts.
 
-Downstream, the resulting banks are consumed by `myocard-egm-classifier` (training + sim-to-real eval) and by `synthetic-egm-pipeline`'s mixer (noise bank → additive noise on clean simulated traces).
+Downstream, the resulting banks are consumed by `myocard-egm-classifier` (training + the label-free IAFDB diagnostic) and by `synthetic-egm-pipeline`'s mixer (noise bank → additive noise on clean simulated traces).
 
 ---
 
@@ -35,7 +35,7 @@ pip install -e ".[dev]"
 pre-commit install
 ```
 
-The runtime deps (`myocard-egm-contracts`, `myocard-egm-data`, `myocard-egm-signal`, `numpy`, `wfdb`, `tqdm`, `pyyaml`) come in transitively. The three myocard siblings are pinned to git tags during pre-1.0; drop the direct references once they publish to PyPI.
+The runtime deps (`myocard-egm-contracts`, `myocard-egm-data`, `myocard-egm-signal`, `pydantic`, `numpy`, `wfdb`, `tqdm`, `pyyaml`) come in transitively. The three myocard siblings are pinned to git tags during pre-1.0; drop the direct references once they publish to PyPI.
 
 ---
 
@@ -59,6 +59,12 @@ Four console scripts are installed:
 | `iafdb-export-noise-bank` | Build a `noise_bank.h5` + `noise_bank_run_record.json`. |
 
 The two `export` commands are config-driven; the YAML schema and a per-command walkthrough live in [`docs/usage.md`](docs/usage.md). Pre-written configs covering the Sánchez sinus-rhythm 0.5 mV threshold, the Kosiuk AF-adjusted 0.2 mV threshold, an unfiltered pretraining mode, a paired-ClassifierBank mode, and two noise-side strategies (percentile, absolute) live under [`examples/`](examples/).
+
+---
+
+## Stable bank IDs
+
+Every bank the producer writes carries a stable cross-artifact ID (an egm-contracts `ArtifactId`) so the intracardiac-platform phase manifests and provenance tracking can refer to it. By default the ID is derived at write time from the bank's role — `tbank_iafdb_<date>` for a thresholded training bank, `ptbank_iafdb_<date>` for an unfiltered (`threshold.mode: none`) pretraining bank, and `nbank_iafdb_<date>` for a noise bank. Set `data.bank_id` in the config (or pass `bank_id=` to the orchestrator) to override with a hand-curated ID. See [`docs/usage.md`](docs/usage.md) for the full reference and the same-day-collision note.
 
 ---
 
@@ -105,7 +111,7 @@ CI runs the same checks on Python 3.10, 3.11, and 3.12 — see `.github/workflow
 
 ## Project status
 
-This package is part of the in-progress [myocard-labs](https://github.com/myocard-labs) refactor. Pre-1.0 — expect breaking changes across minor versions until the schemas stabilize. The current release is `v0.2.0` and pins `egm-contracts v0.2.0`, `egm-data v0.2.0`, and `egm-signal v0.1.0`. See [`project/roadmap.md`](project/roadmap.md) for what's planned and [`project/architecture.md`](project/architecture.md) for the design rationale.
+This package is part of the in-progress [myocard-labs](https://github.com/myocard-labs) refactor. Pre-1.0 — expect breaking changes across minor versions until the schemas stabilize. The current release is `v0.3.0` and pins `egm-contracts v0.5.1`, `egm-data v0.4.0`, and `egm-signal v0.1.0`. See [`project/roadmap.md`](project/roadmap.md) for what's planned and [`project/architecture.md`](project/architecture.md) for the design rationale.
 
 ---
 

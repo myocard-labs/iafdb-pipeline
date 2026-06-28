@@ -80,6 +80,7 @@ The shipped examples cover the four common scenarios:
 - `examples/iafdb_healthy_sanchez.yaml` — Sánchez sinus-rhythm 0.5 mV threshold (the literature anchor).
 - `examples/iafdb_pretrain.yaml` — `threshold.mode: none` for unsupervised pretraining banks (every windowed segment kept).
 - `examples/iafdb_classifier.yaml` — Same selection as the default, but additionally emits a paired ClassifierBank.h5 with every trace labeled 0 (healthy).
+- `examples/iafdb_healthy_with_bank_id.yaml` — Same as the default, but sets an explicit `data.bank_id` instead of auto-deriving it (see [Stable bank IDs](#stable-bank-ids)).
 
 Run one with:
 
@@ -101,6 +102,7 @@ Shipped examples:
 
 - `examples/iafdb_noise_percentile.yaml` — 20th-percentile (scale-invariant) keep-below. **Recommended default** for uncalibrated IAFDB input.
 - `examples/iafdb_noise_absolute.yaml` — 0.05 mV absolute (Sanders 2003 "electrically silent" tier). Requires calibrated input — not the IAFDB defaults.
+- `examples/iafdb_noise_with_bank_id.yaml` — Percentile noise bank with an explicit `data.bank_id` override (recorded on the sidecar).
 
 ## Config schema
 
@@ -117,6 +119,7 @@ Both export CLIs share the same YAML conventions:
 data:
   data_dir: ../data/iafdb                      # required — IAFDB download root
   output:   ../banks/iafdb_healthy_v1.h5       # required — output .h5 path
+  # bank_id: tbank_iafdb_healthy_2026-06-27    # optional — auto-derived (tbank_iafdb_<date>) when omitted
 
 format:
   type: iafdb                                  # 'iafdb' (default) or 'classifier'
@@ -143,6 +146,7 @@ Per-field reference:
 |---|---|---|---|
 | `data.data_dir` | path | (required) | Root of the IAFDB download. |
 | `data.output` | path | (required) | Output `.h5` path for the iafdb_bank. |
+| `data.bank_id` | str (ArtifactId) | auto: `tbank_`/`ptbank_` + `_iafdb_<date>` | Optional explicit stable id. Derived from the threshold role when omitted (`none` → `ptbank_`, else `tbank_`). See [Stable bank IDs](#stable-bank-ids). |
 | `format.type` | `iafdb` / `classifier` | `iafdb` | When `classifier`, also writes a labeled ClassifierBank.h5 sibling. |
 | `format.label_policy` | str | `all-healthy` | Label policy for the ClassifierBank conversion. Only `all-healthy` is implemented today. |
 | `format.classifier_output` | path | `<output>.classifier.h5` | Override the classifier output location. |
@@ -159,6 +163,7 @@ Per-field reference:
 data:
   data_dir: ../data/iafdb                      # required
   output:   ../banks/iafdb_noise_v1.h5         # required — output .h5 path
+  # bank_id: nbank_iafdb_quiet_2026-06-27      # optional — auto-derived (nbank_iafdb_<date>); recorded on the sidecar
   # run_record_output: ../banks/iafdb_noise_v1_run_record.json
   # ^^^ optional; default is <output>.stem + "_run_record.json" next to the bank.
 
@@ -181,6 +186,7 @@ Per-field reference:
 |---|---|---|---|
 | `data.data_dir` | path | (required) | Root of the IAFDB download. |
 | `data.output` | path | (required) | Output `.h5` path for the noise_bank. |
+| `data.bank_id` | str (ArtifactId) | auto: `nbank_iafdb_<date>` | Optional explicit stable id. Recorded on the run-record sidecar (the slim noise_bank HDF5 carries no id). See [Stable bank IDs](#stable-bank-ids). |
 | `data.run_record_output` | path | `<output>_run_record.json` | Override the sidecar location. |
 | `threshold.mode` | `absolute` / `percentile` | `percentile` | Noise-side selection strategy. `none` is **rejected** (no pass-through noise bank). |
 | `threshold.value` | float | (required) | mV for `absolute`, 0-100 for `percentile`. |
@@ -188,6 +194,24 @@ Per-field reference:
 | `windowing.hop_ms` | float | `100.0` | Stride between adjacent windows. |
 | `windowing.band_hz` | `[low, high]` | `[30, 300]` | Bandpass for peak-to-peak measurement. |
 | `description` | str | `""` | Free-form note stamped into the JSON sidecar. |
+
+## Stable bank IDs
+
+Every bank the producer writes carries a stable cross-artifact ID — an egm-contracts `ArtifactId` (added in egm-contracts v0.5.0 for the cross-artifact-linkage system). The intracardiac-platform phase manifests and the provenance graph key on it.
+
+By default the ID is **derived at write time** from the bank's role:
+
+| Output | Default ID | When |
+|---|---|---|
+| iafdb_bank (thresholded) | `tbank_iafdb_<date>` | `threshold.mode` is `absolute` or `percentile` |
+| iafdb_bank (unfiltered) | `ptbank_iafdb_<date>` | `threshold.mode: none` (pretraining bank) |
+| noise_bank | `nbank_iafdb_<date>` | always |
+
+`<date>` is the write-time UTC date (`YYYY-MM-DD`). To override with a hand-curated ID, set `data.bank_id` in the config (or pass `bank_id=` to the orchestrator). An explicit ID is validated against the ArtifactId pattern (`^[a-z]+_[a-z0-9_]+_\d{4}-\d{2}-\d{2}(_v\d+)?$`) and rejected up front if malformed.
+
+For the iafdb_bank the ID is stamped on the HDF5 root attr `bank_id` and propagates onto the paired ClassifierBank's source-bank entry plus every trace. For the noise bank it rides on the `noise_bank_run_record.json` sidecar — the slim `noise_bank` HDF5 schema intentionally carries no ID.
+
+**Same-day collisions.** The auto-derived default has no within-day uniqueness — two thresholded banks exported on the same date both derive `tbank_iafdb_<date>`. Set an explicit `data.bank_id` when you produce more than one bank of the same role per day; the platform's `validate_manifest` (Check A.2) catches a real duplicate across the project at curation time.
 
 ## End-to-end walkthroughs
 
@@ -200,13 +224,13 @@ iafdb-export-bank examples/iafdb_healthy_default.yaml
 
 The bank lands at `../banks/iafdb_healthy_v1.h5` (relative to the example config's directory — adjust the YAML if your layout differs). egm-classifier can open it directly via `load_iafdb_bank_as_classifier` with the project's label policy.
 
-### Producing a paired ClassifierBank for sim-to-real eval
+### Producing a paired ClassifierBank for the IAFDB diagnostic
 
 ```bash
 iafdb-export-bank examples/iafdb_classifier.yaml
 ```
 
-Two files come out: the iafdb_bank.h5 and the labeled ClassifierBank.h5. The ClassifierBank is what egm-classifier consumes during the hybrid eval; the iafdb_bank is the producer's primary artifact and stays around as the canonical record.
+Two files come out: the iafdb_bank.h5 and the labeled ClassifierBank.h5. The ClassifierBank is what egm-classifier loads when running the trained model over IAFDB segments; the iafdb_bank is the producer's primary artifact and stays around as the canonical record.
 
 ### Producing a pretraining bank (no threshold)
 

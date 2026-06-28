@@ -86,6 +86,7 @@ def _format_result(result: BankExportResult, *, threshold_descr: str) -> str:
     lines.append(f"Wrote iafdb bank: {result.output_path}")
     if result.classifier_path is not None:
         lines.append(f"Wrote classifier bank: {result.classifier_path}")
+    lines.append(f"  Bank id:              {result.bank_id}")
     lines.append(f"  N segments:           {result.n_segments}")
     lines.append(f"  Records processed:    {result.n_records_processed}")
     lines.append(f"  Records contributing: {len(result.source_records)}")
@@ -146,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
             output_format=cfg.output_format,
             label_fn=label_fn,
             classifier_path=cfg.classifier_output,
+            bank_id=cfg.bank_id,
         )
     except FileExistsError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
