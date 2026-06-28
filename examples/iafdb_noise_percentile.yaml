@@ -15,6 +15,9 @@
 data:
   data_dir: ../data/iafdb
   output:   ../banks/iafdb_noise_v1.h5
+  # bank_id is optional; auto-derived (nbank_iafdb_<date>) when omitted,
+  # and recorded on the run-record sidecar (not the slim HDF5).
+  # bank_id: nbank_iafdb_quiet_2026-06-27
   # run_record_output is optional; defaults to <output>.stem + "_run_record.json"
   # next to the bank. Override only if you want a non-adjacent JSON.
   # run_record_output: ../banks/iafdb_noise_v1_run_record.json

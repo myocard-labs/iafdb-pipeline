@@ -35,7 +35,7 @@ pip install -e ".[dev]"
 pre-commit install
 ```
 
-The runtime deps (`myocard-egm-contracts`, `myocard-egm-data`, `myocard-egm-signal`, `numpy`, `wfdb`, `tqdm`, `pyyaml`) come in transitively. The three myocard siblings are pinned to git tags during pre-1.0; drop the direct references once they publish to PyPI.
+The runtime deps (`myocard-egm-contracts`, `myocard-egm-data`, `myocard-egm-signal`, `pydantic`, `numpy`, `wfdb`, `tqdm`, `pyyaml`) come in transitively. The three myocard siblings are pinned to git tags during pre-1.0; drop the direct references once they publish to PyPI.
 
 ---
 
@@ -59,6 +59,12 @@ Four console scripts are installed:
 | `iafdb-export-noise-bank` | Build a `noise_bank.h5` + `noise_bank_run_record.json`. |
 
 The two `export` commands are config-driven; the YAML schema and a per-command walkthrough live in [`docs/usage.md`](docs/usage.md). Pre-written configs covering the Sánchez sinus-rhythm 0.5 mV threshold, the Kosiuk AF-adjusted 0.2 mV threshold, an unfiltered pretraining mode, a paired-ClassifierBank mode, and two noise-side strategies (percentile, absolute) live under [`examples/`](examples/).
+
+---
+
+## Stable bank IDs
+
+Every bank the producer writes carries a stable cross-artifact ID (an egm-contracts `ArtifactId`) so the intracardiac-platform phase manifests and provenance tracking can refer to it. By default the ID is derived at write time from the bank's role — `tbank_iafdb_<date>` for a thresholded training bank, `ptbank_iafdb_<date>` for an unfiltered (`threshold.mode: none`) pretraining bank, and `nbank_iafdb_<date>` for a noise bank. Set `data.bank_id` in the config (or pass `bank_id=` to the orchestrator) to override with a hand-curated ID. See [`docs/usage.md`](docs/usage.md) for the full reference and the same-day-collision note.
 
 ---
 
@@ -105,7 +111,7 @@ CI runs the same checks on Python 3.10, 3.11, and 3.12 — see `.github/workflow
 
 ## Project status
 
-This package is part of the in-progress [myocard-labs](https://github.com/myocard-labs) refactor. Pre-1.0 — expect breaking changes across minor versions until the schemas stabilize. The current release is `v0.2.0` and pins `egm-contracts v0.2.0`, `egm-data v0.2.0`, and `egm-signal v0.1.0`. See [`project/roadmap.md`](project/roadmap.md) for what's planned and [`project/architecture.md`](project/architecture.md) for the design rationale.
+This package is part of the in-progress [myocard-labs](https://github.com/myocard-labs) refactor. Pre-1.0 — expect breaking changes across minor versions until the schemas stabilize. The current release is `v0.3.0` and pins `egm-contracts v0.5.1`, `egm-data v0.4.0`, and `egm-signal v0.1.0`. See [`project/roadmap.md`](project/roadmap.md) for what's planned and [`project/architecture.md`](project/architecture.md) for the design rationale.
 
 ---
 

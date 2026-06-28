@@ -35,7 +35,34 @@ myocard-egm-data       @ git+...@v0.2.0
 myocard-egm-signal     @ git+...@v0.1.0
 ```
 
-## v0.3.0+ — concrete next steps
+## v0.3.0 — stable cross-artifact IDs (current release)
+
+Adds stable cross-artifact ID stamping for the cross-artifact-linkage
+system (egm-contracts v0.5.0 / egm-data v0.4.0):
+
+- Every bank carries an egm-contracts `ArtifactId`. Auto-derived from the
+  bank's role at write time (`tbank_` / `ptbank_` / `nbank_` + `iafdb` +
+  UTC date), or overridden via the `data.bank_id` config key / `bank_id=`
+  orchestrator kwarg. Derivation + validation live in `ids.py`.
+- iafdb_bank stamps the ID on the HDF5 root attr (`iafdb_bank` 1.2) and
+  propagates it onto the paired ClassifierBank. The noise bank's ID rides
+  on the `noise_bank_run_record.json` sidecar
+  (`noise_bank_run_record` 1.1); the slim noise HDF5 is unchanged.
+- See `architecture.md` > "Stable cross-artifact IDs" for the design and
+  the same-day-uniqueness limitation.
+
+Re-pinned dependencies:
+
+```
+myocard-egm-contracts @ git+...@v0.5.1
+myocard-egm-data       @ git+...@v0.4.0
+myocard-egm-signal     @ git+...@v0.1.0
+```
+
+Follow-on (other producers, tracked in the meta repo): synthetic-egm-pipeline
+and egm-classifier stamp their own IDs and re-pin egm-data v0.4.0 next.
+
+## v0.4.0+ — concrete next steps
 
 These are sized for "could land in one focused PR each." Items
 scheduled into cross-cutting Phase work in the meta repo's
@@ -150,15 +177,20 @@ each time:
 3. Round-trip test via `egm-contracts.validators` (already in tests).
 4. Tag + release.
 
-Three upcoming bumps that affect this repo specifically:
+Upcoming bumps that affect this repo specifically. **Note:** the
+cross-artifact-linkage wave (egm-contracts v0.5.0) already consumed
+`iafdb_bank` 1.2 and `noise_bank_run_record` 1.1 for the `bank_id`
+field, so the planned features below shift up a version:
 
-- **`iafdb_bank` 1.2** (audit-report sidecar pointer) — pairs with the
+- **`iafdb_bank` 1.3** (audit-report sidecar pointer) — pairs with the
   per-record audit reports work above; ships in the same Phase 1.5
-  release as the producer-side `--report` flag.
+  release as the producer-side `--report` flag. (1.2 was taken by
+  `bank_id`.)
 - **`noise_bank` 1.1** (`calibration_scalar` per-trace column) — pairs
-  with the noise-side opt-in calibration work above.
-- **`noise_bank_run_record` 1.1** (`per_trace_provenance.lead`) — same
-  release as `noise_bank` 1.1.
+  with the noise-side opt-in calibration work above. The noise HDF5
+  schema was *not* bumped by the linkage wave, so 1.1 is still free.
+- **`noise_bank_run_record` 1.2** (`per_trace_provenance.lead`) — pairs
+  with `noise_bank` 1.1. (1.1 was taken by `bank_id`.)
 
 ## Won't-do (out of scope, but documented to save the question)
 

@@ -1,0 +1,29 @@
+# IAFDB healthy bank with an explicit, hand-curated stable ID.
+#
+# Most configs let the producer auto-derive the bank's cross-artifact
+# ID (tbank_iafdb_<today> for a thresholded bank, ptbank_iafdb_<today>
+# for an unfiltered one). When you want a descriptive, reproducible ID
+# — e.g. to reference the bank from a phase manifest, or because you
+# produce more than one bank of the same role on the same day — set
+# `data.bank_id` explicitly. It is validated against the egm-contracts
+# ArtifactId pattern and stamped verbatim onto the bank's HDF5 root
+# attr (and onto any paired ClassifierBank's source entry + traces).
+
+data:
+  data_dir: ../data/iafdb
+  output:   ../banks/iafdb_healthy_kosiuk.h5
+  bank_id:  tbank_iafdb_healthy_kosiuk_2026-06-27     # explicit override: lowercase role_descriptor_date
+
+format:
+  type: iafdb
+
+threshold:
+  mode:  absolute
+  value: 0.2                                          # Kosiuk AF-adjusted 0.2 mV
+
+windowing:
+  window_ms: 512.0
+  hop_ms:    256.0
+
+calibration:
+  target_qrs_pp_mv: 1.0
