@@ -105,6 +105,7 @@ class BankExportConfig:
     # data
     data_dir: Path
     output: Path
+    bank_id: str | None
 
     # format
     output_format: OutputFormat
@@ -137,6 +138,10 @@ def build_bank_export_config(doc: dict[str, Any]) -> BankExportConfig:
     if data_dir is None or output is None:
         raise ConfigError("data.data_dir and data.output must both be set.")
 
+    # Optional explicit stable id; None -> the producer derives a default.
+    bank_id_raw = _optional(doc, "data", "bank_id", default=None)
+    bank_id = str(bank_id_raw) if bank_id_raw is not None else None
+
     output_format_raw = _optional(doc, "format", "type", default="iafdb")
     if output_format_raw not in ("iafdb", "classifier"):
         raise ConfigError(f"format.type must be 'iafdb' or 'classifier'; got {output_format_raw!r}")
@@ -166,6 +171,7 @@ def build_bank_export_config(doc: dict[str, Any]) -> BankExportConfig:
     return BankExportConfig(
         data_dir=data_dir,
         output=output,
+        bank_id=bank_id,
         output_format=output_format_raw,
         label_policy=label_policy,
         classifier_output=classifier_output,
@@ -194,6 +200,7 @@ class NoiseBankExportConfig:
     data_dir: Path
     output: Path
     run_record_output: Path | None
+    bank_id: str | None
 
     # threshold
     threshold_mode: NoiseThresholdMode
@@ -220,6 +227,10 @@ def build_noise_bank_export_config(doc: dict[str, Any]) -> NoiseBankExportConfig
         _optional(doc, "data", "run_record_output", default=None), cfg_dir
     )
 
+    # Optional explicit stable id; None -> the producer derives a default.
+    bank_id_raw = _optional(doc, "data", "bank_id", default=None)
+    bank_id = str(bank_id_raw) if bank_id_raw is not None else None
+
     threshold_mode_raw = _optional(doc, "threshold", "mode", default="percentile")
     if threshold_mode_raw not in ("absolute", "percentile"):
         raise ConfigError(
@@ -241,6 +252,7 @@ def build_noise_bank_export_config(doc: dict[str, Any]) -> NoiseBankExportConfig
         data_dir=data_dir,
         output=output,
         run_record_output=run_record_output,
+        bank_id=bank_id,
         threshold_mode=threshold_mode_raw,
         threshold_value=threshold_value,
         window_ms=window_ms,
