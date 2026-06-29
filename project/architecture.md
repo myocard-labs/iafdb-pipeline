@@ -385,6 +385,14 @@ write time and emits the ClassifierBank.h5 as a sibling file. The
 label policy is still consumer-side; the producer just runs it
 internally with the `format.label_policy` from the config.
 
+Two policies ship today: `all-healthy` (every trace labeled 0) and
+`unlabeled` (the label_fn returns `None`, leaving every `label_truth`
+as `None` with an empty labels dict). `unlabeled` is the honest choice
+for IAFDB — it has no per-segment fibrosis truth — and is what feeds an
+eval run that emits an unlabeled (`upred_`) predictions bank. egm-data's
+converter accepts the `None` return directly (`IAFDBLabelFn`), so the
+policy is just a closure that declines to label.
+
 ## Testing strategy
 
 Two layers:

@@ -85,8 +85,10 @@ the priority-order selection. Likely lands as an optional
 
 ### Additional label policies
 
-`format.label_policy` is wired but only `all-healthy` is implemented.
-Plausible additions in priority order:
+`format.label_policy` ships `all-healthy` and `unlabeled` (v0.4.0; the
+latter's label_fn returns `None`, leaving every `label_truth` None — the
+honest IAFDB policy that feeds an unlabeled `upred_` eval). Plausible
+*further* additions in priority order:
 
 - **`per-patient-af-status`** — read AF / sinus-rhythm assignment
   from a side file (the IAFDB description doesn't ship one, so this
@@ -102,8 +104,8 @@ Plausible additions in priority order:
   > → Tracked at `intracardiac-platform/project/project_plan.md` Phase 1.5 (shortcut-hunt diagnostic).
 
 The signature is fixed (a callable taking a Pydantic `IafdbBank` and
-returning `(labels, labels_dict)`), so adding a policy is a
-config-key + a closure.
+returning `(labels, labels_dict)` *or* `None` for the unlabeled case),
+so adding a policy is a config-key + a closure.
 
 ### Multi-record dedup
 

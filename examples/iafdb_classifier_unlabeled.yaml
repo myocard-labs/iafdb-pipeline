@@ -1,0 +1,30 @@
+# IAFDB + unlabeled ClassifierBank pair — Kosiuk threshold, no ground truth.
+#
+# Same selection as iafdb_classifier.yaml, but the sibling ClassifierBank.h5
+# is written with the `unlabeled` label policy: every label_truth is None and
+# the labels dict is empty. IAFDB carries no per-segment fibrosis truth, so
+# this is the honest export — and it is the bank an eval run predicts on to
+# emit an unlabeled (upred_) predictions bank for the realism /
+# output-distribution figures.
+
+data:
+  data_dir: ../data/iafdb
+  output:   ../banks/iafdb_inference_v1.h5             # the iafdb_bank.h5 still gets written
+
+format:
+  type: classifier                                      # also writes ClassifierBank.h5
+  label_policy: unlabeled                               # no ground truth — every label_truth None
+  # classifier_output is optional; defaults to <output>.classifier.h5
+  # next to the iafdb bank. Set explicitly for a different location:
+  # classifier_output: ../banks/iafdb_inference_v1.classifier.h5
+
+threshold:
+  mode:  absolute
+  value: 0.2
+
+windowing:
+  window_ms: 512.0
+  hop_ms:    256.0
+
+calibration:
+  target_qrs_pp_mv: 1.0

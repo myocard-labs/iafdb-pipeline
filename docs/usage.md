@@ -124,7 +124,7 @@ data:
 format:
   type: iafdb                                  # 'iafdb' (default) or 'classifier'
   # The two below only matter when type=classifier:
-  label_policy: all-healthy                    # required for 'classifier'
+  label_policy: all-healthy                    # required for 'classifier' — 'all-healthy' or 'unlabeled'
   # classifier_output: ../banks/iafdb_healthy_v1.classifier.h5  # default: <output>.classifier.h5
 
 threshold:
@@ -148,7 +148,7 @@ Per-field reference:
 | `data.output` | path | (required) | Output `.h5` path for the iafdb_bank. |
 | `data.bank_id` | str (ArtifactId) | auto: `tbank_`/`ptbank_` + `_iafdb_<date>` | Optional explicit stable id. Derived from the threshold role when omitted (`none` → `ptbank_`, else `tbank_`). See [Stable bank IDs](#stable-bank-ids). |
 | `format.type` | `iafdb` / `classifier` | `iafdb` | When `classifier`, also writes a labeled ClassifierBank.h5 sibling. |
-| `format.label_policy` | str | `all-healthy` | Label policy for the ClassifierBank conversion. Only `all-healthy` is implemented today. |
+| `format.label_policy` | `all-healthy` / `unlabeled` | `all-healthy` | Label policy for the ClassifierBank conversion. `all-healthy` labels every trace 0 (`{0: "healthy"}`); `unlabeled` leaves every `label_truth` as `None` with an empty labels dict — the honest policy for IAFDB (no per-segment fibrosis truth), and the one to use when the bank feeds an eval run that emits an unlabeled (`upred_`) predictions bank. |
 | `format.classifier_output` | path | `<output>.classifier.h5` | Override the classifier output location. |
 | `threshold.mode` | `absolute` / `percentile` / `none` | `absolute` | Healthy-side selection strategy. |
 | `threshold.value` | float | `0.2` | mV cutoff for `absolute`, 0-100 percentile for `percentile`, ignored for `none`. |
