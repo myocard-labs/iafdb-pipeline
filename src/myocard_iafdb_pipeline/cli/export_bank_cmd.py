@@ -24,8 +24,11 @@ Examples
     # Unfiltered pretraining bank.
     iafdb-export-bank examples/iafdb_pretrain.yaml
 
-    # IAFDB + ClassifierBank pair.
+    # IAFDB + ClassifierBank pair (all-healthy labels).
     iafdb-export-bank examples/iafdb_classifier.yaml
+
+    # IAFDB + unlabeled ClassifierBank (no ground truth) for inference.
+    iafdb-export-bank examples/iafdb_classifier_unlabeled.yaml
 """
 
 from __future__ import annotations
@@ -67,17 +70,38 @@ def _build_threshold(cfg: BankExportConfig) -> ThresholdStrategy:
 def _label_policy(name: str) -> Any:
     """Map a config-supplied policy name to a label_fn callable.
 
-    Today the only policy is ``"all-healthy"`` — every trace is labeled 0.
-    Additional policies (e.g. patient-level AF status) can be added here
-    without touching the producer signature.
+    Policies:
+
+    - ``"all-healthy"`` — every trace labeled 0 ("healthy"). Encodes the
+      fiction that all IAFDB segments are non-fibrotic; only loosely
+      defensible for a sinus-rhythm-thresholded bank, and a documented
+      limitation either way (IAFDB carries no per-segment fibrosis truth).
+    - ``"unlabeled"`` — no ground truth: the label_fn returns ``None``, which
+      egm-data's converter maps to every ``label_truth = None`` plus an empty
+      labels dict. The honest policy for IAFDB; use it to build the inference
+      bank an eval run turns into an unlabeled (``upred_``) predictions bank.
+
+    The label_fn signature is fixed (a callable taking the Pydantic
+    ``IafdbBank`` and returning ``(labels, labels_dict)`` *or* ``None``), so
+    adding a policy is a config-key + a closure. [egm-data ``IAFDBLabelFn``]
     """
     if name == "all-healthy":
 
-        def label_fn(bank: Any) -> tuple[np.ndarray, dict[int, str]]:
+        def all_healthy(bank: Any) -> tuple[np.ndarray, dict[int, str]]:
             n = len(bank.traces.signal)
             return np.zeros(n, dtype=np.int64), {0: "healthy"}
 
-        return label_fn
+        return all_healthy
+
+    if name == "unlabeled":
+
+        def unlabeled(bank: Any) -> None:
+            # No per-segment ground truth. Returning None tells egm-data's
+            # converter to leave every label_truth = None (labels dict empty).
+            return None
+
+        return unlabeled
+
     raise ConfigError(f"Unknown format.label_policy: {name!r}")
 
 
