@@ -145,6 +145,35 @@ def test_export_bank_classifier_format_writes_both(
     assert all(t.label_truth == 0 for t in cb.traces)
 
 
+def test_export_bank_classifier_unlabeled_policy(
+    synthetic_record: IAFDBRecord, tmp_path: Path
+) -> None:
+    """The 'unlabeled' policy supplies a label_fn returning None, so the
+    producer writes a ClassifierBank with no ground truth: every label_truth
+    is None and the labels dict is empty — the upred_ inference shape that an
+    eval run later predicts on. IAFDB carries no per-segment fibrosis truth."""
+    out = tmp_path / "bank.h5"
+
+    def label_fn(bank: object) -> None:
+        return None
+
+    result = export_bank(
+        out,
+        records=[synthetic_record],
+        threshold=AbsoluteThreshold(0.1),
+        progress=False,
+        output_format="classifier",
+        label_fn=label_fn,
+    )
+    assert result.classifier_path is not None
+    assert result.classifier_path.exists()
+
+    cb = load_classifier_bank(result.classifier_path)
+    assert cb.n_traces > 0
+    assert cb.labels == {}
+    assert all(t.label_truth is None for t in cb.traces)
+
+
 def test_export_bank_classifier_format_requires_label_fn(
     synthetic_record: IAFDBRecord, tmp_path: Path
 ) -> None:

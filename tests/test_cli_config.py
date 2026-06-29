@@ -8,6 +8,7 @@ exercise.
 
 from __future__ import annotations
 
+import types
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from myocard_iafdb_pipeline.cli._config import (
     build_noise_bank_export_config,
     load_yaml,
 )
+from myocard_iafdb_pipeline.cli.export_bank_cmd import _label_policy
 
 # ---------------------------------------------------------------------------
 # Bank-export config
@@ -264,3 +266,34 @@ def test_load_yaml_non_mapping_top_level_raises(tmp_path: Path) -> None:
     path = _write_yaml(tmp_path, "- one\n- two\n")
     with pytest.raises(ConfigError, match="mapping"):
         load_yaml(path)
+
+
+# ---------------------------------------------------------------------------
+# Label policy (CLI name -> label_fn)
+# ---------------------------------------------------------------------------
+
+
+def _fake_bank(n: int) -> object:
+    """A stand-in IafdbBank exposing just the ``traces.signal`` a label_fn reads."""
+    return types.SimpleNamespace(traces=types.SimpleNamespace(signal=[0.0] * n))
+
+
+def test_label_policy_all_healthy_labels_every_trace_zero() -> None:
+    """The 'all-healthy' policy labels all N traces 0 with a {0: 'healthy'} map."""
+    label_fn = _label_policy("all-healthy")
+    labels, labels_dict = label_fn(_fake_bank(3))
+    assert labels.tolist() == [0, 0, 0]
+    assert labels_dict == {0: "healthy"}
+
+
+def test_label_policy_unlabeled_returns_none() -> None:
+    """The 'unlabeled' policy's label_fn returns None — egm-data's converter
+    maps that to every label_truth=None (IAFDB has no per-segment truth)."""
+    label_fn = _label_policy("unlabeled")
+    assert label_fn(_fake_bank(3)) is None
+
+
+def test_label_policy_unknown_raises() -> None:
+    """An unrecognised policy name is a config error, not a silent default."""
+    with pytest.raises(ConfigError, match="label_policy"):
+        _label_policy("vibes-based")
