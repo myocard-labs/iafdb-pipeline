@@ -70,6 +70,16 @@ scheduled into cross-cutting Phase work in the meta repo's
 annotation; the rest are component-internal — add when a consumer
 needs them.
 
+### Validate config `bank_id` override at config-load — Refactor Step 8 (cleanup)
+
+> → Surfaced 2026-06-30 from synthetic-egm-pipeline bank-id testing. Cross-tracked in `intracardiac-platform/project/refactor_checklist.md` Step 8.
+
+The `bank_id` config override (bank export + noise-run record) is checked for
+id-validity at the **write** step, so a bad hand-set id only fails after the
+export work runs. Move the check to config-load time (fail-fast). Same cleanup
+as synthetic-egm-pipeline (where it bites hardest — a full simulation) and
+egm-classifier; pairs with the egm-contracts "optional date suffix" relaxation.
+
 ### Per-record audit reports — Phase 1.5
 
 The producer currently prints a one-line summary on exit ("N segments,
