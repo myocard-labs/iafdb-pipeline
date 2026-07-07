@@ -59,6 +59,37 @@ def test_bank_export_minimum_required_fields(tmp_path: Path) -> None:
     assert cfg.target_qrs_pp_mv == 1.0
 
 
+def test_bank_export_rejects_malformed_bank_id(tmp_path: Path) -> None:
+    """A malformed data.bank_id override fails at config-load (fail-fast),
+    not after the segment-extraction run (S8-3)."""
+    path = _write_yaml(
+        tmp_path,
+        """
+        data:
+          data_dir: ./data
+          output: ./out.h5
+          bank_id: NOT-a-valid-id
+        """,
+    )
+    with pytest.raises(ConfigError, match=r"data.bank_id"):
+        build_bank_export_config(load_yaml(path))
+
+
+def test_bank_export_accepts_valid_bank_id(tmp_path: Path) -> None:
+    """A well-formed stable id passes config-load and reaches the typed config."""
+    path = _write_yaml(
+        tmp_path,
+        """
+        data:
+          data_dir: ./data
+          output: ./out.h5
+          bank_id: tbank_iafdb_healthy_2026-06-25
+        """,
+    )
+    cfg = build_bank_export_config(load_yaml(path))
+    assert cfg.bank_id == "tbank_iafdb_healthy_2026-06-25"
+
+
 def test_bank_export_no_filter_mode_nullable_value(tmp_path: Path) -> None:
     """When threshold.mode is 'none', threshold_value is None; the CLI
     builds a NoThreshold strategy regardless of any value field."""

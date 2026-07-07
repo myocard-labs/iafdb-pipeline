@@ -26,6 +26,8 @@ from typing import Any, Literal
 import yaml
 from myocard_egm_signal import DEFAULT_BIPOLAR_BAND_HZ
 
+from myocard_iafdb_pipeline.ids import validate_artifact_id
+
 
 class ConfigError(ValueError):
     """Raised when a config file is malformed or missing required keys."""
@@ -125,6 +127,22 @@ class BankExportConfig:
     target_qrs_pp_mv: float
 
 
+def _validated_id(value: Any, *, field_path: str) -> str | None:
+    """Validate an optional config-supplied ArtifactId override at load time.
+
+    Returns the id string unchanged (``None`` passes through). Raises
+    :class:`ConfigError` with the field path on a malformed id, so a bad
+    override fails fast at config-load — before the (expensive) export run
+    rather than at the bank write at the very end.
+    """
+    if value is None:
+        return None
+    try:
+        return validate_artifact_id(str(value))
+    except ValueError as exc:
+        raise ConfigError(f"{field_path}: {exc}") from exc
+
+
 def build_bank_export_config(doc: dict[str, Any]) -> BankExportConfig:
     """Translate a parsed YAML dict into a typed bank-export config.
 
@@ -139,8 +157,10 @@ def build_bank_export_config(doc: dict[str, Any]) -> BankExportConfig:
         raise ConfigError("data.data_dir and data.output must both be set.")
 
     # Optional explicit stable id; None -> the producer derives a default.
-    bank_id_raw = _optional(doc, "data", "bank_id", default=None)
-    bank_id = str(bank_id_raw) if bank_id_raw is not None else None
+    # Validated at load so a malformed override fails before the export run.
+    bank_id = _validated_id(
+        _optional(doc, "data", "bank_id", default=None), field_path="data.bank_id"
+    )
 
     output_format_raw = _optional(doc, "format", "type", default="iafdb")
     if output_format_raw not in ("iafdb", "classifier"):
@@ -228,8 +248,10 @@ def build_noise_bank_export_config(doc: dict[str, Any]) -> NoiseBankExportConfig
     )
 
     # Optional explicit stable id; None -> the producer derives a default.
-    bank_id_raw = _optional(doc, "data", "bank_id", default=None)
-    bank_id = str(bank_id_raw) if bank_id_raw is not None else None
+    # Validated at load so a malformed override fails before the export run.
+    bank_id = _validated_id(
+        _optional(doc, "data", "bank_id", default=None), field_path="data.bank_id"
+    )
 
     threshold_mode_raw = _optional(doc, "threshold", "mode", default="percentile")
     if threshold_mode_raw not in ("absolute", "percentile"):
