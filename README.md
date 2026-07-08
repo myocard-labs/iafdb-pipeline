@@ -111,7 +111,7 @@ CI runs the same checks on Python 3.10, 3.11, and 3.12 — see `.github/workflow
 
 ## Project status
 
-This package is part of the in-progress [myocard-labs](https://github.com/myocard-labs) refactor. Pre-1.0 — expect breaking changes across minor versions until the schemas stabilize. The current release is `v0.3.0` and pins `egm-contracts v0.5.1`, `egm-data v0.4.0`, and `egm-signal v0.1.0`. See [`project/roadmap.md`](project/roadmap.md) for what's planned and [`project/architecture.md`](project/architecture.md) for the design rationale.
+This package is part of the in-progress [myocard-labs](https://github.com/myocard-labs) refactor. Pre-1.0 — expect breaking changes across minor versions until the schemas stabilize. The current release is `v0.3.0`; `development` pins `egm-contracts v0.5.3`, `egm-data v0.5.0`, and `egm-signal v0.1.0`. See [`project/roadmap.md`](project/roadmap.md) for what's planned and [`project/architecture.md`](project/architecture.md) for the design rationale.
 
 ---
 
