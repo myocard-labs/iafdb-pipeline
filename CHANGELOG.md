@@ -18,6 +18,9 @@ All notable changes to `iafdb-pipeline` are documented here. The format follows
 
 - Re-pin `egm-contracts v0.5.1 → v0.5.3` and `egm-data v0.4.0 → v0.5.0` (the coordinated
   ArtifactId-date-optional + egm-data pure-I/O cascade).
+- Re-pin `egm-signal v0.1.0 → v0.2.0` — align on the current egm-signal (v0.2.0 is purely
+  additive; surfaced by the S8-7 integration smoke test, which installs one consistent
+  egm-signal across the whole constellation).
 
 ## [0.3.0] — 2026-06-27
 
