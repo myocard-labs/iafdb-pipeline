@@ -60,8 +60,8 @@ classifiers = [
 # schemas live in myocard-egm-contracts (and come in transitively via
 # egm-data). h5py is NOT pulled in directly — egm-data carries it.
 dependencies = [
-  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.5.1",
-  "myocard-egm-data @ git+https://github.com/myocard-labs/egm-data.git@v0.4.0",
+  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.5.3",
+  "myocard-egm-data @ git+https://github.com/myocard-labs/egm-data.git@v0.5.0",
   "myocard-egm-signal @ git+https://github.com/myocard-labs/egm-signal.git@v0.1.0",
   # pydantic is used directly now (validating stable bank ids against
   # egm-contracts' common.ArtifactId in ids.py); it also arrives
