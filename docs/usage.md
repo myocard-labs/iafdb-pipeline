@@ -276,6 +276,7 @@ The threshold strategies, calibration, and segment extractors live in [`myocard-
 ## Where to read more
 
 - For the design rationale (why CLIs over a single one, why the healthy/noise asymmetry, why the producer doesn't pre-calibrate noise input): `project/architecture.md`.
+- For the end-to-end math of both producer paths (calibration, band-pass, thresholding) and a map of where IAFDB and synthetic data diverge: [`theory.md`](theory.md).
 - For known limitations and planned work: `project/roadmap.md`.
 - For the egm-contracts schemas the outputs validate against: `myocard-egm-contracts/docs/schemas/`.
 - For the egm-signal primitives the producer pulls in: `myocard-egm-signal/docs/usage.md`.
