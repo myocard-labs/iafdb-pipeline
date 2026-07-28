@@ -20,9 +20,10 @@ out (§4).
 > band-pass, sliding peak-to-peak, threshold strategies, and R-wave
 > anchoring are all implemented in **`myocard-egm-signal`**; this doc
 > presents each primitive's formula *as the pipeline applies it* and
-> points at the egm-signal source. (egm-signal has no `theory.md` of its
-> own yet, so the primitive derivations are captured here for now — see
-> [Caveats](#7-caveats--open-inconsistencies) for the follow-up.) The
+> points at the egm-signal source. (egm-signal has no `theory.md` yet, so
+> the primitive derivations in §1 and §2.1 are parked here **pending
+> migration** — they belong to egm-signal and move there once its theory
+> doc lands; see [Caveats §7.3](#7-caveats--open-inconsistencies).) The
 > HDF5 serialization is owned by **`myocard-egm-data`**; the schemas by
 > **`myocard-egm-contracts`**.
 
@@ -434,11 +435,33 @@ because they touch the actual calibration scale, and worth reconciling:
    orchestrator loop actually lets `RWaveAnchoring`'s `ValueError`
    propagate (whole export fails). Inert on IAFDB (all records qualify),
    but the doc and code disagree.
-3. **egm-signal has no `theory.md`.** The primitive derivations (§1, §2.1)
-   properly belong to egm-signal. Captured here for now; if egm-signal
-   grows a theory doc, lift §1 and §2.1's primitive math there and
-   cross-link (mirrors `[[feedback-theory-docs-split]]`). *Cross-cutting —
-   escalate to project-lead rather than acting unilaterally.*
+3. **Primitive derivations are parked here — migration scheduled.**
+   *(Resolved 2026-07-28 by the project-lead; this entry tracks the
+   pending action, not an open question.)* The §1 primitives (band-pass,
+   sliding peak-to-peak, threshold strategies) and §2.1 (R-wave
+   anchoring) are **egm-signal's** math, documented here only because
+   egm-signal had no theory doc. The ruling — the owner owns the math
+   theory, mirroring the eval-metrics split where egm-classifier owns the
+   derivations and the viewer cross-links:
+
+   - **egm-signal gains `docs/theory.md`**, written by the egm-signal
+     chat alongside SIG1 as a **Wave-2 deliverable** (SIG1 runs parallel
+     to Wave 1, so it lands early). It owns the shared math, including
+     the new activation-detection primitives — whose derivations
+     graduate out of the platform investigation
+     `activation_splitting_method.md`, which stays as the design and
+     research record and cross-links forward.
+   - **This doc then keeps composition only** — what the producer
+     applies, in what order, with which parameters, and the
+     distributional consequence — plus the IAFDB-specific parts: the
+     §0 ADC/gain input scaling, the pooling of peak-to-peak over
+     *present* bipolar channels (§1.3), per-record filtering, the
+     single-beat drop/stride response, the §4 divergence map, and §5–§6.
+     §1 and §2.1 are lifted, leaving cross-links down to egm-signal.
+
+   **Blocked on** egm-signal's `theory.md` existing; nothing to lift
+   into until then. Tracked as a step in this repo's Phase 1.5
+   implementation plan.
 
 ---
 
