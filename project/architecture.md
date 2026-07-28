@@ -369,11 +369,13 @@ until that's a real workflow.
 ```python
 from myocard_egm_data.banks import load_iafdb_bank_as_classifier
 
+
 # A consumer-side label_fn — the producer doesn't ship one because
 # label semantics are downstream policy.
 def all_healthy(bank):
     n = len(bank.traces.signal)
     return np.zeros(n, dtype=np.int64), {0: "healthy"}
+
 
 cb = load_iafdb_bank_as_classifier("banks/iafdb_healthy_v1.h5", label_fn=all_healthy)
 print(cb.n_traces, cb.labels)
