@@ -252,17 +252,41 @@ The implementation lives in egm-signal (`RWaveAnchoring`,
 
 ## Channel layouts
 
-IAFDB records do NOT share a uniform channel set. Every record has the
-five bipolar pairs (CS12, CS34, CS56, CS78, CS90), but the surface
-ECG complement varies — some records have II + V1 + aVF, others have
-I + III + aVL, etc. The producer handles this by:
+IAFDB records do NOT share a uniform channel set — but the variation is
+narrower and more structured than "it varies." Swept across all 32
+headers (2026-07-29):
 
-- Hard-coding the bipolar set in `constants.BIPOLAR_CHANNELS` (always
-  present, in distal-to-proximal order).
+- **Bipolar: perfectly uniform.** All five pairs (CS12, CS34, CS56,
+  CS78, CS90) are present in **32/32** records, no exceptions.
+- **Surface: exactly three leads per record, in one of four
+  combinations** — `{I, II, V1}` ×12, `{II, V1, aVF}` ×8,
+  `{I, II, aVF}` ×8, `{I, V1, aVF}` ×4. Only **four distinct** surface
+  leads appear anywhere in the dataset (I, II, V1, aVF); **III, V5, aVL
+  and aVR never appear at all**, and no record carries more than three.
+
+The producer handles this by:
+
+- Hard-coding the bipolar set in `constants.BIPOLAR_CHANNELS` (present
+  in every record, in distal-to-proximal order).
 - Picking the surface lead at calibration time from a priority list,
   via `RWaveAnchoring`'s `preferred_leads` kwarg.
 - Skipping a record (with a logged warning) only if zero usable
   surface leads are present.
+
+**Consequence — the priority walk is load-bearing, not defensive.**
+Because no record carries the full complement and the three-lead set
+differs between records, the `preferred_leads` walk is the mechanism
+that absorbs the variation, not a fallback for a rare case. Under the
+shipped `DEFAULT_PREFERRED_LEADS`, **lead II calibrates 28/32 records
+and lead I calibrates the remaining 4** (the `{I, V1, aVF}` group, which
+has no II). The tail of the default list — aVL, III, aVR, V5 — is inert
+on IAFDB, since none of those leads exists here.
+
+Two corollaries worth holding onto: the per-record calibrating lead is a
+provenance fact the methods section will want (and a candidate field for
+B11b's `--report` sidecar), and `extract_healthy_segments`' skip-absent
+filter never actually fires on the bipolar path, because the bipolar set
+is complete in every record.
 
 This shows up as a memory note: "IAFDB has no session timestamps —
 each .dat starts at sample 0; no cross-record clock; channel set

@@ -17,25 +17,41 @@ component-internal.
 The producer prints a one-line summary on exit; a richer per-record report (median QRS p-p,
 calibration scalar, threshold actually applied, windows kept vs rejected, the surface lead
 that won the priority-order selection) is useful for the white-paper methods section and for
-rerunning calibration after a header fix. Likely an optional `--report PATH` flag emitting a
-JSON sidecar next to the bank; pairs with the `iafdb_bank` 1.3 schema bump below.
+rerunning calibration after a header fix. An optional `--report PATH` flag emitting a JSON
+sidecar next to the bank; pairs with the `iafdb_bank` 1.3 schema bump below.
+
+**Split across two waves** (B11a / B11b): Wave 1 adopts the 1.3 schema and ships
+`run_record_path` **unset**, since there is no report to point at yet; Wave 2 builds the
+generator and populates the pointer. The sidecar is documented-but-unvalidated JSON for
+Phase 1.5 — see the schema-bump note below for when it earns a contracts schema.
+
+Two fields are now cheaper than when this was written: the **calibrating lead** and its
+**surface-set group** fall out of the channel-layout sweep recorded in
+[`architecture.md`](architecture.md) ("Channel layouts"), so the report gets per-record
+calibration provenance essentially for free.
 
 > → Tracked at `intracardiac-platform/project/project_plan.md` Phase 1.5 (per-record outlier
 > hunts during the synthetic-vs-IAFDB feature comparison).
 
-### Additional label policies (shortcut-hunt)
+### Additional label policies
 
 `format.label_policy` already ships `all-healthy` and `unlabeled`. Plausible further
 additions, in priority order: **`per-patient-af-status`** (AF / sinus assignment from a
-curated side file — IAFDB ships none), **`drug-state-aware`** (parse the `_afw` drug
-delivery / washout phases into time-varying labels), and **`patient-id-as-label`** (a
-patient-discrimination probe testing whether the classifier leans on a patient-identity
-shortcut vs a generalizable fibrosis signal). The signature is fixed (a callable taking a
-Pydantic `IafdbBank`, returning `(labels, labels_dict)` or `None`), so each is a config key
-+ a closure.
+curated side file — IAFDB ships none) and **`drug-state-aware`** (parse the `_afw` drug
+delivery / washout phases into time-varying labels). The signature is fixed (a callable
+taking a Pydantic `IafdbBank`, returning `(labels, labels_dict)` or `None`), so each is a
+config key + a closure.
 
-> → Tracked at `intracardiac-platform/project/project_plan.md` Phase 1.5 (shortcut-hunt
-> diagnostic).
+**Retired — `patient-id-as-label`.** A third policy was tracked here: labelling each trace
+with its patient id, to train a patient-discrimination probe and see whether the classifier
+leans on a patient-identity shortcut. **Dropped 2026-07-28** — patient identity is never an
+ML classification target on this project, so neither the policy nor the study that consumed
+it will be built. Recorded rather than deleted so the idea isn't re-proposed. The legitimate
+concern underneath it — a noise-donor patient's traces spanning the train and val splits of
+a noise-mixed bank — is real but lives elsewhere: it needs patient provenance on the
+`noise_bank`, not a label policy here. Tracked as **FB-12**; deliberately not in Phase 1.5,
+since only the noise is patient-derived and the `noise_bank` field is additive whenever it's
+wanted.
 
 ## Phase 5 — CLOCS pretraining
 
@@ -90,10 +106,19 @@ wave already consumed `iafdb_bank` 1.2 + `noise_bank_run_record` 1.1 for `bank_i
 below shift up a version):
 
 - **`iafdb_bank` 1.3** (audit-report sidecar pointer) — pairs with the per-record audit
-  reports (Phase 1.5).
-- **`noise_bank` 1.1** (`calibration_scalar` per-trace column) — pairs with noise-side
-  opt-in calibration.
-- **`noise_bank_run_record` 1.2** (`per_trace_provenance.lead`) — pairs with `noise_bank` 1.1.
+  reports (Phase 1.5). Ships **unset** in the Wave-1 re-pin (B11a); the report generator
+  that populates it is Wave-2 work (B11b). The sidecar itself stays **unschema'd** for 1.5
+  — an `iafdb_bank_run_record` schema, mirroring `noise_bank_run_record`, waits for a later
+  contracts wave once the sidecar's shape has stabilized after first use.
+- **`noise_bank` 1.1** (`bank_id` HDF5 root attr) — **B20, Phase 1.5, Wave 1.** Brings the
+  noise bank up to the cross-artifact-linkage baseline the other banks already carry: the id
+  moves onto the bank itself instead of riding only on the `noise_bank_run_record` sidecar.
+  Additive; the sidecar keeps carrying it too, so consumers can migrate at their own pace.
+  Ships in the same re-pin as `iafdb_bank` 1.3 above.
+- **`noise_bank` 1.2** (`calibration_scalar` per-trace column) — pairs with noise-side
+  opt-in calibration, below. Unscheduled; shifted up a version by B20.
+- **`noise_bank_run_record` 1.2** (`per_trace_provenance.lead`) — pairs with the
+  `calibration_scalar` bump, not with B20.
 
 ## Known issues
 

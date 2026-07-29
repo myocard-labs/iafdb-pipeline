@@ -201,7 +201,15 @@ physiological scale, using the surface ECG QRS as a common reference.
 
 1. **Lead choice.** Pick $\ell_r$ = first present of the priority list
    `(II, I, V1, aVF, aVL, III, aVR, V5)`. Lead II usually has the
-   largest, most reliably detectable QRS.
+   largest, most reliably detectable QRS. **On IAFDB this step is
+   load-bearing, not a fallback** (32-header sweep, 2026-07-29): every
+   record carries exactly **three** surface leads, drawn from only four
+   that occur at all — `{I, II, V1}` ×12, `{II, V1, aVF}` ×8,
+   `{I, II, aVF}` ×8, `{I, V1, aVF}` ×4 — so the walk resolves to
+   $\ell_r = \text{II}$ for **28/32** records and $\ell_r = \text{I}$ for
+   the remaining **4**. The list's tail (aVL, III, aVR, V5) is inert
+   here: those leads appear in no IAFDB record. See
+   `project/architecture.md` → "Channel layouts".
 2. **Per-beat amplitude.** For each QRS annotation $q_k$, measure
    peak-to-peak on the **raw, unfiltered** lead $\ell_r$ in a
    $\pm\,\text{half}$ window (half $=50$ samples $\approx 50$ ms each

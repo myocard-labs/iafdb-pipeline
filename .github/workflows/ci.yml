@@ -25,7 +25,11 @@ jobs:
           cache: pip
 
       - name: Install ruff
-        run: pip install "ruff>=0.6.0"
+        # Pinned to match .pre-commit-config.yaml so local lint predicts CI.
+        # Unpinned, CI silently follows ruff releases and fails on files
+        # nobody touched (ruff 0.16 began formatting Markdown code blocks).
+        # Fleet-wide pin, CL-024; bump here and in pre-commit together.
+        run: pip install "ruff==0.15.17"
 
       - name: ruff check
         run: ruff check .
