@@ -69,14 +69,20 @@ coverage.xml
 *.ckpt
 *.safetensors
 
-data/
-banks/
-checkpoints/
-runs/
-logs/
-mlruns/
-wandb/
-artifacts/
+# Root-anchored (leading slash) on purpose — CL-099. Unanchored, these
+# match at ANY depth, so a same-named *source* package (e.g. a future
+# src/myocard_iafdb_pipeline/data/) would be silently untracked: green
+# locally, ModuleNotFoundError in CI. That trap already red-CI'd
+# egm-classifier once. Only the top-level output dirs are ignored.
+/data/
+/banks/
+/checkpoints/
+/runs/
+/logs/
+/mlruns/
+/wandb/
+/artifacts/
+/configs/
 
 # Allow tiny fixtures committed under tests/fixtures/ if needed:
 !tests/fixtures/**

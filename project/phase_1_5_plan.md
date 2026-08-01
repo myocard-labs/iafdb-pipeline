@@ -23,7 +23,8 @@ longer one of those unknowns — see the design note below.
 | **B22** | **egm-signal v0.3.0 adoption** — `DEFAULT_TARGET_QRS_PP_MV` is deleted upstream and `RWaveAnchoring`'s target becomes required. Drop the import, make `export_bank`'s `target_qrs_pp_mv` required, re-pin, and refresh the doc passages that describe the old two-layer default. Originated here (the `theory.md` §7.1 finding); value ruled by research, structural fix ruled by Daniel 2026-07-28; id assigned by CL-024 §5a. Requested from this side by egm-signal in **CL-017**. | S0 |
 | **IAF1** | Activation-train splitting — detect the train per channel, emit length-**192 ms** windows at fractional position `p ∼ 𝒫`, drop boundary + multi-beat windows, filter per record first. **Response only**: the detector, the anchor-window helper, and the boundary / multi-beat predicates are SIG1's; this repo does not re-implement the crop math. | S2–S4 |
 | ~~**IAF2**~~ | ~~`patient-id-as-label` policy~~ — **dissolved 2026-07-28 (CL-027).** Patient identity is never an ML classification target; §3 IAF2 and §8 study 10 are both removed and the id is retired, not reused. The legitimate need it was gesturing at — noise-donor patient awareness at split time — is **FB-12**, not in 1.5. | *n/a* |
-| **B11a** | **Schema adoption (Wave 1)** — stamp `iafdb_bank` 1.3's `run_record_path`, shipped **unset**, since no report exists yet to point at. Current behavior otherwise; pairs with B20 in the same re-pin. | S1 |
+| **IAF3** | **Migrate to egm-contracts + egm-data v0.6.0** (Wave 1) — re-pin both, then adopt the three additive fields at **current behavior**: `noise_bank` `bank_id` (B20), `iafdb_bank` `run_record_path` (B11a), and `iafdb_bank` `traces.activation_position` (CL-052), the last two shipped **absent** until their producers exist. | S1 |
+| **B11a** | **Schema adoption (Wave 1)** — stamp `iafdb_bank` 1.3's `run_record_path`, shipped **unset**, since no report exists yet to point at. Current behavior otherwise; rides IAF3's re-pin. | S1 |
 | **B11b** | **Report generator (Wave 2)** — optional `--report PATH` JSON sidecar (median QRS p-p, calibration scalar, threshold applied, windows kept vs rejected, winning surface lead), and populating the pointer B11a added. Written as **documented-but-unvalidated JSON**: the `iafdb_bank_run_record` schema stays deferred (P6) until its shape stabilizes after first use. | S6 |
 | **B20** | `noise_bank` `bank_id` HDF5 root attr — moves the id off the run-record sidecar onto the bank itself. Wave 1, additive. | S1 |
 | *(doc)* | **`theory.md` trim to consumption-only** — §1.1–1.3 and §2.1 graduate to egm-signal's new `docs/theory.md`; this doc keeps composition + the IAFDB-specific parts and cross-links down. Timing agreed in **CL-018**: leave the sections in place under a "moving to egm-signal" note until egm-signal **v0.4.0** tags, then delete and link — its doc records *as-built* behavior so it can't land before SIG1's code, and trimming first would orphan the math. | S5, S7 |
@@ -142,21 +143,28 @@ Each step is one focused commit, ends green (`ruff format src tests` + `ruff che
   break with zero data impact and **no bank regeneration**.
 - **Depends on:** egm-signal **v0.3.0** tagged. Nothing else in this plan depends on S0.
 
-### S1 — Wave-1 re-pin: `noise_bank` `bank_id` (B20) + `iafdb_bank` 1.3 pointer (B11a) ☐ (1–1.5 h)
+### S1 — Wave-1 migration to v0.6.0 (IAF3 = B20 + B11a + `activation_position`) ✅ (2026-08-01)
 
-- **Change:** re-pin egm-contracts → **v0.6.0** and egm-data → **v0.5.x** in `pyproject.toml`.
-  `export/noise_export.py` stamps the derived/overridden id onto the `noise_bank` **HDF5 root attr**
-  (B20) — `ids.py` already derives it, so this is a plumb-through, not new derivation; the
-  `noise_bank_run_record` sidecar keeps carrying it too, so nothing downstream breaks while consumers
-  move over. `export/bank_export.py` writes `iafdb_bank` 1.3 with `run_record_path` **left unset**
-  (B11a) — no report exists yet to point at. Behavior otherwise unchanged.
-- **Verify:** both banks round-trip through the egm-contracts validators at the new schema versions;
-  a regenerated bank yields the **same traces and labels** as before the re-pin (the Wave-1 gate);
-  `noise_bank`'s root attr and the sidecar agree on the id; `run_record_path` is absent rather than
-  empty-string. Full suite green.
-- **Depends on:** egm-contracts v0.6.0 + egm-data v0.5.x tagged. Independent of S0.
-- **Note:** B20 and B11a share one re-pin and one test pass, so they ship as one commit; the effort
-  table splits them only so each id has a row.
+- **Change:** re-pinned egm-contracts **v0.5.3 → v0.6.0** and egm-data **v0.5.0 → v0.6.0**.
+  `export/noise_export.py` now stamps the resolved id onto the `noise_bank` **HDF5 root attr** (B20):
+  one resolution feeds both the attr and the sidecar, since the schema requires them to agree and two
+  independent derivations either side of a UTC midnight would not.
+  `_build_noise_bank_model` takes `bank_id` as a **required keyword** rather than defaulting to
+  `None` — egm-data's writer raises without it, so failing at construction beats failing at the
+  writer. `export/bank_export.py` is unchanged in behavior: `iafdb_bank` 1.3's `run_record_path`
+  (B11a) and `traces.activation_position` (IAF3) are both **omitted**, with the reasoning recorded at
+  the construction site.
+- **Verify:** ✅ **Wave-1 gate passed.** A bank regenerated with today's config against pre- and
+  post-migration code is **bit-identical** — signal plus all six provenance columns — with no root
+  attr differing except `created_utc`/`bank_id`, and no trace column added or removed. Noise-bank
+  signal matches a direct `extract_noise_segments` call trace-for-trace; bank attr and sidecar id
+  agree. 39 tests pass (3 new), bare `mypy` clean over `src`+`tests`, ruff clean.
+- **Depends on:** egm-contracts + egm-data v0.6.0 — both tagged 2026-07-31 (CL-089, CL-102).
+- **Note:** B20, B11a and the `activation_position` field share one re-pin and one test pass, so they
+  ship as one commit under IAF3; the effort table splits them only so each id has a row.
+- **Not defaulted, deliberately.** `activation_position` ships absent rather than `0.0`, because
+  `0.0` is a legitimate value (activation on the first sample) and a default would fabricate a spike
+  at the low edge of the very distribution T1 exists to compare. A test asserts absence.
 
 ### S2 — Activation-mode config surface (IAF1) ☐ (1.5–3 h)
 

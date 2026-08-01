@@ -60,8 +60,8 @@ classifiers = [
 # schemas live in myocard-egm-contracts (and come in transitively via
 # egm-data). h5py is NOT pulled in directly — egm-data carries it.
 dependencies = [
-  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.5.3",
-  "myocard-egm-data @ git+https://github.com/myocard-labs/egm-data.git@v0.5.0",
+  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.6.0",
+  "myocard-egm-data @ git+https://github.com/myocard-labs/egm-data.git@v0.6.0",
   "myocard-egm-signal @ git+https://github.com/myocard-labs/egm-signal.git@v0.2.0",
   # pydantic is used directly now (validating stable bank ids against
   # egm-contracts' common.ArtifactId in ids.py); it also arrives
@@ -221,14 +221,14 @@ warn_unused_ignores = true
 disallow_untyped_defs = true
 no_implicit_optional = true
 show_error_codes = true
-# Strict-check production code only. The tests/ tree was inherited from
-# the legacy iafdb_pipeline repo without parameter annotations, and
-# strict-annotating ~30 inherited test fixtures is not blocking the
-# v0.2.0 polyrepo refactor. Pytest still asserts behavior; the tests
-# round-trip every producer output through the egm-contracts validator
-# so format-level correctness is exercised. Annotating the test fixtures
-# is good follow-up work for a future PR.
-files = ["src"]
+# Strict-check src AND tests — fleet-wide convention (CL-100, 2026-07-31).
+# Previously src-only: the tests/ tree came over from the legacy
+# iafdb_pipeline repo without parameter annotations, and annotating it was
+# deferred past the v0.2.0 polyrepo refactor. That deferral is now closed —
+# strict mypy over tests caught real sloppiness elsewhere in the fleet, so
+# the tests are held to the same bar as the code they exercise.
+# Run bare `mypy` (no path argument) so local and CI check the same set.
+files = ["src", "tests"]
 
 # wfdb + tqdm ship without complete inline stubs; ignore-missing
 # silences these third-party hops without losing strict checking on our

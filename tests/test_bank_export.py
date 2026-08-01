@@ -68,6 +68,38 @@ def test_export_bank_absolute_threshold_round_trips(
     assert len(bank.source_records) == 1
 
 
+def test_iafdb_bank_13_optional_fields_are_absent_not_defaulted(
+    synthetic_record: IAFDBRecord, tmp_path: Path
+) -> None:
+    """iafdb_bank 1.3 adds two optional fields this Wave-1 migration
+    adopts but deliberately does *not* populate.
+
+    ``run_record_path`` has nothing to point at until B11b builds the
+    ``--report`` generator. ``activation_position`` is meaningless for the
+    sliding-window path, which has no activation anchor at all; IAF1 fills
+    it in Wave 2 for activation-mode banks only.
+
+    Both must read back as **absent**, not as a default. That is load
+    bearing for ``activation_position``: 0.0 is a *legitimate* value
+    meaning the activation sits on the first sample, so defaulting would
+    fabricate a spike at the low edge of the distribution T1 exists to
+    compare against synthetic. The contract says consumers must read
+    absence as 'unknown' — this asserts we give them absence."""
+    out = tmp_path / "bank.h5"
+    export_bank(
+        out,
+        records=[synthetic_record],
+        threshold=AbsoluteThreshold(0.1),
+        progress=False,
+    )
+    assert validate_iafdb_bank(out).ok
+
+    bank = read_iafdb_bank_hdf5(out)
+    assert bank.schema_version.value == current_version("iafdb_bank")
+    assert bank.run_record_path is None
+    assert bank.traces.activation_position is None
+
+
 def test_export_bank_percentile_threshold_round_trips(
     synthetic_record: IAFDBRecord, tmp_path: Path
 ) -> None:
@@ -239,6 +271,55 @@ def test_export_noise_bank_percentile_round_trips(
     bank = read_noise_bank_hdf5(bank_path)
     assert bank.source == "iafdb v1.0.0"
     assert len(bank.traces.signal) == result.n_segments
+
+
+def test_noise_bank_id_is_stamped_on_the_bank_and_agrees_with_the_sidecar(
+    synthetic_record: IAFDBRecord, tmp_path: Path
+) -> None:
+    """noise_bank 1.1 (egm-contracts v0.6.0) moved the stable id onto the
+    HDF5 root attr; it previously rode only on the run-record sidecar.
+
+    The schema's own wording is that when both are present they *MUST
+    agree* — an invariant JSON Schema cannot express, since it spans two
+    files. egm-data enforces it on write; this asserts the producer feeds
+    both from one resolution rather than deriving twice (two derivations
+    on either side of a UTC midnight would disagree)."""
+    bank_path = tmp_path / "noise.h5"
+    result = export_noise_bank(
+        bank_path,
+        records=[synthetic_record],
+        strategy=PercentileQuietThreshold(50.0),
+        progress=False,
+    )
+
+    bank = read_noise_bank_hdf5(bank_path)
+    record = load_noise_bank_run_record(result.run_record_path)
+
+    assert bank.bank_id is not None, "new banks must carry an id; only legacy banks may omit it"
+    assert bank.bank_id == result.bank_id
+    assert bank.bank_id == record.bank_id
+
+
+def test_noise_bank_id_override_reaches_both_files(
+    synthetic_record: IAFDBRecord, tmp_path: Path
+) -> None:
+    """An explicit id must land on the bank attr as well as the sidecar —
+    the curation path (a hand-chosen descriptive id) is exactly where a
+    drift between the two would be most confusing."""
+    bank_path = tmp_path / "noise.h5"
+    result = export_noise_bank(
+        bank_path,
+        records=[synthetic_record],
+        strategy=PercentileQuietThreshold(50.0),
+        bank_id="nbank_iafdb_custom_2026-07-31",
+        progress=False,
+    )
+
+    bank = read_noise_bank_hdf5(bank_path)
+    record = load_noise_bank_run_record(result.run_record_path)
+
+    assert bank.bank_id == "nbank_iafdb_custom_2026-07-31"
+    assert record.bank_id == bank.bank_id
 
 
 def test_export_noise_bank_absolute_records_provenance(

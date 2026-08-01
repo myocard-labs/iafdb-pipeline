@@ -325,6 +325,25 @@ def _build_iafdb_bank_model(
 
     The Pydantic model is the contract with egm-data's writer — building
     it here means schema-shaped validation happens before any disk I/O.
+
+    **Two ``iafdb_bank`` 1.3 fields are deliberately omitted here** (the
+    Wave-1 migration adopts the schema at current behavior):
+
+    - ``run_record_path`` — the sidecar pointer. Nothing writes an iafdb
+      run record yet; the ``--report`` generator that does is Wave-2 work
+      (B11b). Pointing at a file that does not exist would be worse than
+      leaving the attr absent.
+    - ``traces.activation_position`` — the realized ``[0,1]`` anchor the
+      activation-aware splitter placed. This producer is still
+      sliding-window only, where **no activation anchor exists**, so the
+      field is not merely unpopulated but *meaningless*; IAF1 fills it in
+      Wave 2 for activation-mode banks only.
+
+    Both are omitted rather than written as ``None``/``0.0``. That matters
+    for ``activation_position``: ``0.0`` is a legitimate value (activation
+    on the first sample), so a default would fabricate a spike at the low
+    edge of the very distribution T1 exists to compare. Absence means
+    "unknown", per the ``ActivationPosition`` contract.
     """
     n = len(segments)
     signal_list = [seg.signal.astype(np.float32, copy=False).tolist() for seg in segments]

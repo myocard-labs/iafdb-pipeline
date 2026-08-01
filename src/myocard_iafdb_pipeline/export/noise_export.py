@@ -162,7 +162,10 @@ def export_noise_bank(
         raise FileExistsError(f"{run_record_path} already exists; pass overwrite=True to replace.")
 
     # Resolve the stable id up front (validate an explicit one before the
-    # record sweep). It rides on the run-record sidecar, not the slim HDF5.
+    # record sweep). Since noise_bank 1.1 (egm-contracts v0.6.0) it is
+    # stamped on the HDF5 root attr *and* carried on the run-record
+    # sidecar; the two MUST agree, which egm-data enforces (JSON Schema
+    # cannot compare across two files). One resolution feeds both.
     resolved_bank_id = (
         validate_artifact_id(bank_id) if bank_id is not None else derive_noise_bank_id()
     )
@@ -208,7 +211,7 @@ def export_noise_bank(
                 all_segments.append(seg)
 
     # Build the (slim) Pydantic bank model.
-    pyd_bank = _build_noise_bank_model(all_segments)
+    pyd_bank = _build_noise_bank_model(all_segments, bank_id=resolved_bank_id)
     write_noise_bank(pyd_bank, bank_path, overwrite=overwrite)
 
     # Build + write the provenance sidecar with the optional per-trace
@@ -267,12 +270,21 @@ def export_noise_bank(
 # ---------------------------------------------------------------------------
 
 
-def _build_noise_bank_model(segments: list[NoiseSegment]) -> _noise_bank_models.NoiseBank:
-    """Assemble accumulator state into a Pydantic NoiseBank (slim) model."""
+def _build_noise_bank_model(
+    segments: list[NoiseSegment], *, bank_id: str
+) -> _noise_bank_models.NoiseBank:
+    """Assemble accumulator state into a Pydantic NoiseBank (slim) model.
+
+    ``bank_id`` is optional in the schema but **required on write** — the
+    same convention ``iafdb_bank`` and ``synthetic_bank`` already use.
+    egm-data's writer raises without it, so it is a required keyword here
+    rather than defaulting to ``None`` and failing later at the writer.
+    """
     signal_list = [seg.signal.astype(np.float32, copy=False).tolist() for seg in segments]
     doc: dict[str, Any] = {
         "schema_version": current_version("noise_bank"),
         "created_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "bank_id": bank_id,
         "source": BANK_SOURCE,
         "fs_hz": float(SAMPLING_RATE_HZ),
         "traces": {

@@ -8,6 +8,18 @@ All notable changes to `iafdb-pipeline` are documented here. The format follows
 
 ### Added
 
+- **`noise_bank` `bank_id` on the bank itself** (`noise_bank` 1.1, B20). The stable
+  cross-artifact id was previously carried only on the `noise_bank_run_record.json`
+  sidecar; it is now also stamped on the HDF5 root attr, so a consumer can identify a
+  noise bank without opening the sidecar. Both are fed from one resolution, so they
+  cannot disagree.
+- **`iafdb_bank` 1.3 fields adopted** (IAF3 / B11a): `run_record_path` (the audit-report
+  sidecar pointer) and per-trace `activation_position` (the realized `[0,1]` anchor).
+  Both ship **absent** — the `--report` generator that fills the first and the
+  activation-aware splitter that fills the second are Phase-1.5 Wave-2 work. Absence is
+  the contract's "unknown"; `activation_position` is never defaulted to `0.0`, which is a
+  legitimate position value.
+
 - **`unlabeled` label policy** (`format.label_policy: unlabeled`) — the `label_fn` returns
   `None`, leaving every `label_truth` unset; the honest IAFDB policy that feeds an unlabeled
   `upred_` eval (IAFDB has no fibrosis ground truth).
@@ -16,6 +28,12 @@ All notable changes to `iafdb-pipeline` are documented here. The format follows
 
 ### Changed
 
+- **Re-pin `egm-contracts v0.5.3 → v0.6.0` and `egm-data v0.5.0 → v0.6.0`** — the Phase-1.5
+  Wave-1 coordinated bump. Additive for this producer: a bank regenerated with the same
+  config is bit-identical to its pre-migration counterpart, so no bank needs regenerating.
+- **mypy now type-checks `tests` as well as `src`** (fleet convention). Run bare `mypy`.
+- **`.gitignore` output-dir patterns root-anchored** (`/data/`, `/banks/`, …). Unanchored
+  they matched at any depth and would have silently untracked a same-named source package.
 - Re-pin `egm-contracts v0.5.1 → v0.5.3` and `egm-data v0.4.0 → v0.5.0` (the coordinated
   ArtifactId-date-optional + egm-data pure-I/O cascade).
 - Re-pin `egm-signal v0.1.0 → v0.2.0` — align on the current egm-signal (v0.2.0 is purely

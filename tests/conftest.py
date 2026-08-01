@@ -9,6 +9,8 @@ errors.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 import pytest
 
@@ -146,6 +148,12 @@ def synthetic_record_no_qrs() -> IAFDBRecord:
 
 
 @pytest.fixture
-def synthetic_record_factory():
-    """Factory that lets a test parametrize the synthetic record's properties."""
+def synthetic_record_factory() -> Callable[..., IAFDBRecord]:
+    """Factory that lets a test parametrize the synthetic record's properties.
+
+    Typed as ``Callable[..., IAFDBRecord]`` rather than spelling out
+    ``build_synthetic_record``'s keyword-only parameters: callers vary
+    which ones they pass, and a Protocol mirroring the full signature
+    would need updating every time a knob is added.
+    """
     return build_synthetic_record
