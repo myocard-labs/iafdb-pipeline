@@ -16,16 +16,17 @@ out (§4).
 > not math symbols.
 
 > **Ownership boundary.** iafdb-pipeline is a *producer* — it owns
-> composition and IAFDB-specific quantities, not the DSP primitives. The
-> band-pass, sliding peak-to-peak, threshold strategies, and R-wave
-> anchoring are all implemented in **`myocard-egm-signal`**; this doc
-> presents each primitive's formula *as the pipeline applies it* and
-> points at the egm-signal source. (egm-signal has no `theory.md` yet, so
-> the primitive derivations in §1 and §2.1 are parked here **pending
-> migration** — they belong to egm-signal and move there once its theory
-> doc lands; see [Caveats §7.3](#7-caveats--open-inconsistencies).) The
-> HDF5 serialization is owned by **`myocard-egm-data`**; the schemas by
-> **`myocard-egm-contracts`**.
+> **composition** and IAFDB-specific quantities, not the DSP primitives.
+> The band-pass, sliding peak-to-peak, threshold strategies and R-wave
+> anchoring are implemented in **`myocard-egm-signal`**, and their
+> derivations live in **`egm-signal/docs/theory.md`** (§1 filtering, §6
+> segment extraction and calibration). This doc says what this pipeline
+> *does with* them — the order, the parameters, the channel set, and what
+> each choice means for IAFDB — and links down for the mathematics. The
+> rule is that the repo owning a primitive owns its math, so nothing is
+> derived twice; see [Caveats §7.3](#7-caveats--open-inconsistencies) for
+> the history. The HDF5 serialization is owned by **`myocard-egm-data`**;
+> the schemas by **`myocard-egm-contracts`**.
 
 > **Honest-evaluation framing.** IAFDB has **no fibrosis ground truth**,
 > so none of the math here supports a scored ML result on IAFDB (no
@@ -42,9 +43,6 @@ out (§4).
 - [Notation](#notation)
 - [0. Input: from ADC counts to nominal mV](#0-input-from-adc-counts-to-nominal-mv)
 - [1. Shared primitives (both paths)](#1-shared-primitives-both-paths)
-  - [1.1 Band-pass filter](#11-band-pass-filter)
-  - [1.2 Sliding-window peak-to-peak](#12-sliding-window-peak-to-peak)
-  - [1.3 Threshold strategies](#13-threshold-strategies)
 - [2. Trace-bank path (`iafdb_bank`)](#2-trace-bank-path-iafdb_bank)
   - [2.1 Per-record calibration (R-wave anchoring)](#21-per-record-calibration-r-wave-anchoring)
   - [2.2 Per-channel transform](#22-per-channel-transform)
@@ -118,69 +116,35 @@ Both producer paths compose the same three primitives in the same order:
 **band-pass → sliding peak-to-peak → threshold**. Only the calibration
 (§2.1, healthy only), window sizes, and comparison direction differ.
 
-### 1.1 Band-pass filter
+> **The math for all three now lives in egm-signal.** They are egm-signal
+> primitives, and the repo that owns a primitive owns its derivation, so
+> this section is a pointer rather than a restatement — two copies of one
+> derivation drift, and the copy that drifts is the one nobody runs.
+>
+> | Primitive | Where the math is |
+> |---|---|
+> | Zero-phase band-pass (Butterworth, `sosfiltfilt`, the linearity that lets $a_r$ factor through) | `egm-signal/docs/theory.md` §1.1–1.2 |
+> | Sliding-window peak-to-peak (window starts, count, NaN-robust amplitude) | §6.1 |
+> | Threshold strategies, the pooled amplitude distribution they consume, and the empty-pool sentinels | §6.2 |
+> | R-wave-anchored calibration (§2.1 below) | §6.3 |
 
-`myocard_egm_signal.filters.bandpass` — a **zero-phase Butterworth**
-band-pass applied along the sample axis. Design order $M = 2$; the filter
-is realized as second-order sections and applied with
-`scipy.signal.sosfiltfilt`, which runs the filter **forward then
-backward**. The forward-backward pass squares the magnitude response and
-cancels phase:
-$$ |H_{\text{eff}}(f)| = |H_{\text{butter}}(f)|^2, \qquad \angle H_{\text{eff}}(f) = 0. $$
-So the effective magnitude roll-off is that of an order-$2M = 4$ filter,
-with **exactly zero group delay** — sample $n$ of the output aligns with
-sample $n$ of the input (verified: energy-centroid shift $= 0.000$
-samples on a 150 Hz burst). No delay compensation is needed anywhere
-downstream.
+**What stays this repo's to state**, because it is composition rather than
+mathematics:
 
-The band is the clinical bipolar-EGM band $[f_\text{lo}, f_\text{hi}] =
-[30, 300]$ Hz (Sánchez 2021 / Unger 2019 / Deno 2017). The high edge is
-capped at $0.99 \cdot f_s/2$ for safety; at $f_s = 1000$ this is inert
-($300 < 495$). Physically the band removes sub-30 Hz baseline wander and
-far-field ventricular content, and everything above 300 Hz.
-
-**Linearity — the load-bearing property.** Because the filter is linear,
-a scalar factors through it:
-$$ \mathrm{BP}(a \cdot x) = a \cdot \mathrm{BP}(x). $$
-Verified numerically to $7\times10^{-16}$. This is why the per-record
-calibration scalar (§2.1) can be reasoned about independently of the
-filter, and why it scales the peak-to-peak exactly (§2.2).
-
-### 1.2 Sliding-window peak-to-peak
-
-`myocard_egm_signal.windowing.sliding_window_peak_to_peak` — on a 1-D
-filtered channel $y[\cdot, c]$ of length $N_r$, window starts are
-$$ s_i = i \cdot H, \qquad i = 0, 1, \ldots, \left\lfloor \frac{N_r - W}{H} \right\rfloor, $$
-giving $\left\lfloor (N_r - W)/H \right\rfloor + 1$ windows per channel
-(0 if $W > N_r$). Each window's amplitude is
-$$ \mathrm{p2p}_{c,i} = \operatorname*{nanmax}_{s_i \le n < s_i + W} y[n, c] \;-\; \operatorname*{nanmin}_{s_i \le n < s_i + W} y[n, c]. $$
-`nanmax`/`nanmin` make it NaN-robust. This single scalar per window is
-both the **selection statistic** (§1.3) and the value stored as
-`peak_to_peak_mv`.
-
-### 1.3 Threshold strategies
-
-A strategy consumes the **pooled** peak-to-peak distribution of a record
-— every window of every *present* bipolar channel concatenated,
-$$ P_r = \bigl\{\, \mathrm{p2p}_{c,i} \;:\; c \in \mathcal{B} \cap \text{channels}(r),\ i \,\bigr\}, $$
-and returns one scalar. Three keep-above strategies (trace path) and two
-keep-below (noise path):
-
-| Strategy | Returns $T_r$ / $U_r$ | Calibration needed? |
-|---|---|---|
-| `AbsoluteThreshold(v)` | $v$ | yes — $v$ is in mV |
-| `PercentileThreshold(p)` | $\operatorname{percentile}(P_r, p)$ | no — scale-invariant |
-| `NoThreshold` | $-\infty$ (keeps everything) | n/a |
-| `AbsoluteQuietThreshold(v)` | $v$ | yes |
-| `PercentileQuietThreshold(p)` | $\operatorname{percentile}(P_r, p)$ | no |
-
-`np.percentile` uses linear interpolation between order statistics
-(e.g. on $\{0.1,\ldots,1.0\}$, $P_{20} = 0.28$, $P_{70} = 0.73$). The
-selection rules are
-$$ \text{trace: keep } (c,i) \iff \mathrm{p2p}_{c,i} \ge T_r, \qquad \text{noise: keep } (c,i) \iff \mathrm{p2p}_{c,i} \le U_r. $$
-Percentile thresholds are **per-record**: the same percentile is a
-different mV cut in every record, adapting to that record's own amplitude
-distribution — the natural choice for uncalibrated input.
+- **The order, and that both paths share it.** Calibrate (healthy only) →
+  band-pass → sliding peak-to-peak → threshold. The noise path skips
+  calibration and reverses the comparison.
+- **Which channel set is pooled.** The threshold is computed over *every
+  window of every present bipolar channel of one record*, pooled —
+  `constants.BIPOLAR_CHANNELS`, the five CS pairs in distal-to-proximal
+  order. Pooling is per **record**, so a percentile threshold is a
+  different mV cut in every record; that is the point on uncalibrated
+  input. egm-signal's skip-absent guard never fires on this path, since
+  all five pairs are present in all 32 records (see
+  `project/architecture.md` → "Channel layouts").
+- **The parameters this producer chooses** — the $[30,300]$ Hz band, the
+  512/256 ms healthy windowing and 200/100 ms noise windowing, and which
+  threshold strategy each path defaults to. Those are in §5.
 
 ---
 
@@ -195,61 +159,49 @@ a consumer-supplied `label_fn` (`all-healthy` or, honestly for IAFDB,
 
 ### 2.1 Per-record calibration (R-wave anchoring)
 
-`egm_signal.compute_calibration` → `RWaveAnchoring`. Goal: recover a
-per-record scalar $a_r$ that maps the nominal-mV signal (§0) onto a
-physiological scale, using the surface ECG QRS as a common reference.
+`egm_signal.compute_calibration` → `RWaveAnchoring`. Recovers a per-record
+scalar $a_r$ mapping the nominal-mV signal (§0) onto a common scale, using
+the surface-ECG QRS as the reference: measure peak-to-peak per annotated
+beat on a chosen lead, take the median $M_r$ across beats, and set
+$a_r = \tau / M_r$ for a target $\tau$.
 
-1. **Lead choice.** Pick $\ell_r$ = first present of the priority list
-   `(II, I, V1, aVF, aVL, III, aVR, V5)`. Lead II usually has the
-   largest, most reliably detectable QRS. **On IAFDB this step is
-   load-bearing, not a fallback** (32-header sweep, 2026-07-29): every
-   record carries exactly **three** surface leads, drawn from only four
-   that occur at all — `{I, II, V1}` ×12, `{II, V1, aVF}` ×8,
-   `{I, II, aVF}` ×8, `{I, V1, aVF}` ×4 — so the walk resolves to
-   $\ell_r = \text{II}$ for **28/32** records and $\ell_r = \text{I}$ for
-   the remaining **4**. The list's tail (aVL, III, aVR, V5) is inert
-   here: those leads appear in no IAFDB record. See
-   `project/architecture.md` → "Channel layouts".
-2. **Per-beat amplitude.** For each QRS annotation $q_k$, measure
-   peak-to-peak on the **raw, unfiltered** lead $\ell_r$ in a
-   $\pm\,\text{half}$ window (half $=50$ samples $\approx 50$ ms each
-   side; window clamped to signal bounds):
-   $$ \rho_k = \max_{q_k - \text{half} \le n \le q_k + \text{half}} x^{(r)}[n, \ell_r] \;-\; \min(\cdots). $$
-3. **Robust aggregate.** $M_r = \operatorname{median}_k \rho_k$ — median
-   over beats, so ectopics/noise don't dominate.
-4. **Scalar.** With target $\tau$,
-   $$ \boxed{\,a_r = \dfrac{\tau}{M_r}\,}. $$
+**The derivation is `egm-signal/docs/theory.md` §6.3** — the beat window,
+the median's role, and why the reference is measured on the raw rather
+than band-passed lead. What follows is what that math means *on IAFDB*.
 
-$\tau$ is a configurable target QRS peak-to-peak, and there is exactly
-**one** place it is defaulted: the CLI/YAML, at $\tau = 1.0$ mV
-(`cli/_config.py`). `export_bank(...)` **requires** the argument — it has
-no default of its own — and egm-signal deleted its
-`DEFAULT_TARGET_QRS_PP_MV` in v0.3.0 for the same reason. Until then the
-library said $1.5$ and this repo's CLI said $1.0$, so the same code
-calibrated a corpus to a different scale depending on whether it was
-entered through the CLI or called directly; requiring the argument makes
-that class of drift impossible rather than merely fixed.
-Example: $M_r = 2.0$ mV, $\tau = 1.0 \Rightarrow a_r = 0.5$.
+**The target $\tau$ is this repo's policy, and is set in exactly one
+place:** the CLI/YAML default, $\tau = 1.0$ mV (`cli/_config.py`).
+`export_bank(...)` **requires** the argument and egm-signal ships no
+default at all — it deleted `DEFAULT_TARGET_QRS_PP_MV` in v0.3.0 (B22).
+Before that the library said $1.5$ and this repo's CLI said $1.0$, so the
+same code calibrated a corpus to a different scale depending on whether it
+was entered through the CLI or called directly. Requiring the argument
+makes that class of drift impossible rather than merely fixed, and is why
+egm-signal's §6.3 deliberately names no default: the value belongs to the
+consumer that knows its corpus. Example: $M_r = 2.0$ mV, $\tau = 1.0
+\Rightarrow a_r = 0.5$.
+
+**Lead selection is load-bearing here, not a fallback.** IAFDB records
+carry exactly three surface leads each, drawn from only four that occur in
+the dataset at all, so the priority walk is the mechanism that absorbs the
+variation rather than a guard for a rare case — it resolves to lead II for
+28 of 32 records and lead I for the other 4, and the tail of the default
+priority list is inert because those leads appear in no record. The
+measured breakdown lives in `project/architecture.md` → "Channel layouts",
+which is the layout story's home; egm-signal §6.3 cites it as the concrete
+argument for `preferred_leads` being a caller-supplied argument.
 
 **Failure modes.** If a record carries no QRS annotations, or none of the
 preferred leads is present, or $M_r \le 0$, `RWaveAnchoring` raises
 `ValueError`. All 32 IAFDB records ship `.qrs` files and at least one
-preferred lead, so this does not fire in practice — but note the
-orchestrator does **not** catch it (see §7).
-
-**Subtlety for the research.** The anchor is measured on the
-*full-bandwidth* surface ECG (a QRS is a low-frequency deflection,
-largely below the 30 Hz bipolar low-cut), yet $a_r$ is applied to a
-bipolar signal that is then band-passed to $[30,300]$ Hz. So the target
-"1 mV R-wave" is a whole-ECG amplitude used to scale a band-limited
-intracardiac signal — a defensible engineering anchor, but not a
-literature-standard calibration. Document transparently in any writeup.
+preferred lead, so this does not fire in practice — but the orchestrator
+does **not** catch it (see §7).
 
 ### 2.2 Per-channel transform
 
 For each present bipolar channel $c \in \mathcal{B} \cap \text{channels}(r)$:
 $$ \tilde{x}[n, c] = a_r \cdot x^{(r)}[n, c] \quad\xrightarrow{\ \text{band-pass}\ }\quad y[n, c] = \mathrm{BP}_{30,300}\bigl(\tilde{x}[\cdot, c]\bigr)[n]. $$
-By linearity (§1.1), $y[\cdot, c] = a_r \cdot \mathrm{BP}(x^{(r)}[\cdot, c])$,
+By linearity of the band-pass (egm-signal §1.1), $y[\cdot, c] = a_r \cdot \mathrm{BP}(x^{(r)}[\cdot, c])$,
 so every peak-to-peak is exactly the uncalibrated value scaled by $a_r$:
 $$ \mathrm{p2p}_{c,i} = a_r \cdot \mathrm{p2p}^{\text{uncal}}_{c,i}. $$
 **Consequence:** an `AbsoluteThreshold(0.2)` cut is a true 0.2 mV cut only
@@ -259,7 +211,7 @@ thing across records. Percentile thresholds are unaffected by $a_r$
 
 ### 2.3 Selection and emission
 
-Compute $T_r$ from the pooled distribution (§1.3), then keep windows with
+Compute $T_r$ from the pooled distribution (§1; math in egm-signal §6.2), then keep windows with
 $\mathrm{p2p}_{c,i} \ge T_r$. Each kept window emits a `HealthySegment`
 whose **`signal` is the calibrated, band-passed window**
 $$ y[s_i : s_i + W,\ c] \in \mathbb{R}^{W}, \qquad W = 512, $$
@@ -362,7 +314,7 @@ metrics (§honest-evaluation framing above).
    uncalibrated, which the mixer must know.
 
 4. **Band-pass parity.** Real traces are zero-phase 30–300 Hz Butterworth
-   (§1.1). If the synthetic pipeline doesn't apply an *identical* band —
+   (egm-signal §1.2). If the synthetic pipeline doesn't apply an *identical* band —
    same edges, same zero-phase realization — the spectra differ for a
    purely procedural reason. Confirm the synthetic side filters to the
    same band before attributing spectral gaps to physics.
@@ -451,33 +403,34 @@ because they touch the actual calibration scale, and worth reconciling:
    orchestrator loop actually lets `RWaveAnchoring`'s `ValueError`
    propagate (whole export fails). Inert on IAFDB (all records qualify),
    but the doc and code disagree.
-3. **Primitive derivations are parked here — migration scheduled.**
-   *(Resolved 2026-07-28 by the project-lead; this entry tracks the
-   pending action, not an open question.)* The §1 primitives (band-pass,
-   sliding peak-to-peak, threshold strategies) and §2.1 (R-wave
-   anchoring) are **egm-signal's** math, documented here only because
-   egm-signal had no theory doc. The ruling — the owner owns the math
-   theory, mirroring the eval-metrics split where egm-classifier owns the
-   derivations and the viewer cross-links:
+3. **Primitive derivations lived here — DONE 2026-08-06, they are now
+   egm-signal's.** This doc originally carried the band-pass, sliding
+   peak-to-peak, threshold-strategy and R-wave-anchoring math, only
+   because egm-signal had no theory doc. The project-lead ruled that the
+   repo owning a primitive owns its derivation — mirroring the
+   eval-metrics split, where egm-classifier owns the math and the viewer
+   cross-links — and the migration has now completed in both directions:
 
-   - **egm-signal gains `docs/theory.md`**, written by the egm-signal
-     chat alongside SIG1 as a **Wave-2 deliverable** (SIG1 runs parallel
-     to Wave 1, so it lands early). It owns the shared math, including
-     the new activation-detection primitives — whose derivations
-     graduate out of the platform investigation
-     `activation_splitting_method.md`, which stays as the design and
-     research record and cross-links forward.
-   - **This doc then keeps composition only** — what the producer
-     applies, in what order, with which parameters, and the
-     distributional consequence — plus the IAFDB-specific parts: the
-     §0 ADC/gain input scaling, the pooling of peak-to-peak over
-     *present* bipolar channels (§1.3), per-record filtering, the
-     single-beat drop/stride response, the §4 divergence map, and §5–§6.
-     §1 and §2.1 are lifted, leaving cross-links down to egm-signal.
+   - **egm-signal's `docs/theory.md`** landed with SIG1 (v0.4.0) and
+     absorbed them as §1 (filtering) and §6 (segment extraction and
+     calibration), together with the activation-detection math that
+     graduated out of the platform investigation
+     `activation_splitting_method.md`.
+   - **This doc keeps composition** — what the producer applies, in what
+     order, with which parameters, and what each choice means for IAFDB —
+     plus the parts that are genuinely this repo's: the §0 ADC/gain input
+     scaling, the pooled channel set, the calibration *target* (a policy
+     value this repo owns), the §4 divergence map, and §5–§6. §1 and §2.1
+     are now links.
 
-   **Blocked on** egm-signal's `theory.md` existing; nothing to lift
-   into until then. Tracked as a step in this repo's Phase 1.5
-   implementation plan.
+   Two boundary calls worth remembering, since they were argued rather
+   than assumed: **pool assembly went to egm-signal** (the skip-absent
+   filter and the empty-pool sentinels are meaningless apart from the
+   pooling that produces an empty pool), and **the calibration target's
+   value stayed here** (egm-signal's §6.3 deliberately names no default,
+   so the two-sources-of-truth problem B22 removed from code is not
+   rebuilt in prose). The measured channel-layout facts live in
+   `project/architecture.md`, which both docs cite.
 
 ---
 
@@ -486,7 +439,11 @@ because they touch the actual calibration scale, and worth reconciling:
 Source (this repo): `export/bank_export.py`, `export/noise_export.py`,
 `records.py`, `constants.py`, `cli/_config.py`, `ids.py`.
 
-Primitives (egm-signal, read-only from here):
+Primitives (egm-signal, read-only from here) — **the derivations are in
+`egm-signal/docs/theory.md`**: §1.1–1.2 zero-phase filtering and the
+band-pass, §6.1 sliding-window peak-to-peak, §6.2 the pooled-amplitude
+threshold strategies and empty-pool sentinels, §6.3 R-wave-anchored
+calibration, §6.4 the two senses of "anchoring". Implementations:
 `filters/bandpass.py`, `windowing.py`, `thresholds/{healthy,noise}.py`,
 `calibration/{r_wave_anchoring,qrs_estimation}.py`,
 `extraction/extractors.py`.

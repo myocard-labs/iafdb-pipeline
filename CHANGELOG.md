@@ -37,6 +37,19 @@ All notable changes to `iafdb-pipeline` are documented here. The format follows
   data changes** — every bank on disk came through the CLI, which already passed 1.0.
   *Migration:* pass the value explicitly to `export_bank(...)`; CLI and YAML users are
   unaffected.
+- **`docs/theory.md` trimmed to composition + IAFDB specifics.** The band-pass, sliding
+  peak-to-peak, threshold-strategy and R-wave-anchoring derivations moved to
+  `egm-signal/docs/theory.md` (§1, §6), which absorbed them when SIG1 shipped — the repo
+  owning a primitive owns its math, so nothing is now derived in two places. This doc
+  keeps what it uniquely knows: the order the primitives are composed in, the pooled
+  channel set, the calibration *target* value, the parameters, and the sim-vs-real
+  divergence map. Pool assembly went to egm-signal (its empty-pool sentinels are
+  meaningless apart from it); the calibration target's value stayed here, so B22's
+  single-source fix is not undone in prose.
+- **Re-pin `egm-data v0.6.0 → v0.6.1`** — picks up the converter fix so a ClassifierBank
+  derived from an `iafdb_bank` emits `patient_id` as `'iaf1'` rather than the Pydantic
+  `repr` `"root='iaf1'"` (same for `band_hz`). Verified against the reproduction that
+  found it; no iafdb-side change was needed.
 - **Re-pin `egm-signal v0.2.0 → v0.4.0`.** Note this is v0.4.0, not the v0.3.0 the B22
   change was written up under — egm-signal's 0.3.0 release was never tagged, and the
   commit shipped inside v0.4.0. v0.4.0 is otherwise purely additive here: every

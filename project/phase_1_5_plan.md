@@ -2,14 +2,14 @@
 
 **Repo:** iafdb-pipeline · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** planning · **Progress:** 0/9 steps done
+**Status:** in progress · **Progress:** 4/9 steps done — Wave 1 complete for this repo (S0 B22, S1 IAF3, S5+S7 the `theory.md` graduation). Remaining: S2–S4 (IAF1) and S6 (B11b), both **Wave 2**, plus S8 phase-exit.
 **Repo estimate:** **12–23.75 h active · 11 points** across B22 · IAF1 · B20 · B11a · B11b and the
 `theory.md` trim. Cold-start estimates are by **analogy**, not arithmetic —
 `estimation_ledger.csv` is empty, so there is no time-per-point rate to multiply by yet. Ranges are
 deliberately wide, widest on IAF1 (see its driver notes).
 
-**Wave placement:** S0 touches no schema and is gated only on egm-signal v0.3.0, so it sits **outside
-the Wave-1 re-pin cascade** and runs early, parallel to Wave 1. B20 and B11's schema half are
+**Wave placement:** S0 touches no schema and was gated only on egm-signal's B22 tag — which shipped as
+**v0.4.0**, not the v0.3.0 it was written up as (that tag was never created), so this repo pins v0.4.0. B20 and B11's schema half are
 **Wave 1** (they need egm-contracts v0.6.0 + egm-data). IAF1 is **Wave 2** — it needs SIG1
 (egm-signal v0.4.0) *and* the activation-position range `𝒫` that study §8.1 produces. `T` is no
 longer one of those unknowns — see the design note below.
@@ -218,7 +218,7 @@ Each step is one focused commit, ends green (`ruff format src tests` + `ruff che
   yield matches the tallies.
 - **Depends on:** S3. The upper end of the range assumes the extra column lands; see the design note.
 
-### S5 — `theory.md` graduation notice ☐ (0.25 h)
+### S5 — `theory.md` graduation notice ✅ *(superseded — egm-signal's doc landed before this was needed, so the trim (S7) happened directly)*
 
 - **Change:** annotate §1.1–1.3 and §2.1 with a "moving to egm-signal — see its `docs/theory.md`"
   pointer, per the timing agreed in CL-029/CL-031. No content moves yet.
@@ -238,7 +238,7 @@ Each step is one focused commit, ends green (`ruff format src tests` + `ruff che
   `run_record_path` resolves relative to the bank; a run without `--report` still leaves the attr unset.
 - **Depends on:** S1 (the attr must exist). S4 if the activation tallies are to appear.
 
-### S7 — `theory.md` trim to consumption-only ☐ (1.5–2.5 h)
+### S7 — `theory.md` trim to consumption-only ✅ (2026-08-06)
 
 - **Change:** delete §1.1–1.3 and §2.1, replacing them with cross-links into egm-signal's
   `docs/theory.md`; rewire the table of contents, notation table and every internal reference; keep
