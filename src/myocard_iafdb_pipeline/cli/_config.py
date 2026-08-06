@@ -186,6 +186,19 @@ def build_bank_export_config(doc: dict[str, Any]) -> BankExportConfig:
         raise ConfigError("windowing.band_hz must be a two-element list [low, high].")
     band_hz = (float(band_hz_raw[0]), float(band_hz_raw[1]))
 
+    # The constellation's ONE target-amplitude default. egm-signal removed
+    # its own (v0.3.0, B22) on the library-defaults rule, and
+    # export_bank() requires the argument — so this line is the single
+    # place the value is decided, and the only place to change it.
+    #
+    # Why 1.0 mV: it is the value every bank on disk was produced with,
+    # and every example config carries it, so keeping it means no corpus
+    # is re-scaled. The number itself is a normalization convention, not a
+    # clinical threshold — R-wave anchoring divides by the per-record
+    # median QRS peak-to-peak, so the target only sets the units the
+    # calibrated corpus lands in. It is deliberately not the 1.5 mV
+    # egm-signal used to default to; that copy drifted from this one, and
+    # this is the one the data followed.
     target_qrs_pp_mv = float(_optional(doc, "calibration", "target_qrs_pp_mv", default=1.0))
 
     return BankExportConfig(

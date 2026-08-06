@@ -110,7 +110,17 @@ It is tracked here only as the **external dependency that sets IAF1's activation
 Each step is one focused commit, ends green (`ruff format src tests` + `ruff check` + `mypy src` +
 `pytest`), and states its verification. ☐ todo · 🔨 wip · ✅ done
 
-### S0 — Adopt egm-signal v0.3.0: required QRS-calibration target ☐ (1–2 h)
+### S0 — Adopt egm-signal's required QRS-calibration target (B22) ✅ (2026-08-06)
+
+> **Pinned to v0.4.0, not v0.3.0.** The B22 change was written up as egm-signal 0.3.0 — its
+> CHANGELOG has a `[0.3.0]` section and design §7 step 7 says "re-pin v0.3.0" — but **that tag was
+> never created**, on the remote or locally; the commit shipped inside **v0.4.0**. Pinning the
+> documented version would have made `pip install` fail outright. Checked before pinning that
+> v0.4.0 is otherwise additive for this repo: every threshold / extraction / calibration name the
+> producer imports still resolves, and `DEFAULT_TARGET_QRS_PP_MV` is the only casualty — so the
+> "adopt one small breaking change in isolation" intent survives even though the isolating tag
+> does not. Design §7 step 7 and egm-signal's dangling `[0.3.0]` CHANGELOG link both want a
+> correction from their owners.
 
 - **Change — source:**
   - `pyproject.toml:65` — re-pin `myocard-egm-signal` v0.2.0 → **v0.3.0**.

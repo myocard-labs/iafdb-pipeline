@@ -155,7 +155,7 @@ Per-field reference:
 | `windowing.window_ms` | float | `512.0` | Sliding-window length. |
 | `windowing.hop_ms` | float | `256.0` | Stride between adjacent windows. |
 | `windowing.band_hz` | `[low, high]` | `[30, 300]` | Bandpass for peak-to-peak measurement. |
-| `calibration.target_qrs_pp_mv` | float | `1.0` | Target QRS peak-to-peak the R-wave anchoring normalizes to. |
+| `calibration.target_qrs_pp_mv` | float | `1.0` | Target QRS peak-to-peak the R-wave anchoring normalizes to. **This is the only place the value is defaulted** — the programmatic `export_bank()` requires it explicitly, and egm-signal ships no default of its own, so a corpus can't be calibrated to two different scales depending on the entry point. |
 
 ### `iafdb-export-noise-bank` config
 

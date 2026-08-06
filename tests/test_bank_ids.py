@@ -20,6 +20,11 @@ from myocard_iafdb_pipeline.export import export_bank, export_noise_bank
 from myocard_iafdb_pipeline.ids import derive_iafdb_bank_id, derive_noise_bank_id
 from myocard_iafdb_pipeline.records import IAFDBRecord
 
+# egm-signal v0.3.0 (B22) removed the library default for the calibration
+# target, so export_bank() now REQUIRES it. 1.0 mV mirrors the CLI config
+# default in cli/_config.py, which is the single place the value is decided.
+TARGET_QRS_PP_MV = 1.0
+
 # ---------------------------------------------------------------------------
 # iafdb_bank id
 # ---------------------------------------------------------------------------
@@ -30,7 +35,11 @@ def test_bank_auto_derives_tbank_id(synthetic_record: IAFDBRecord, tmp_path: Pat
     and the id round-trips onto the HDF5 root attr the reader surfaces."""
     out = tmp_path / "bank.h5"
     result = export_bank(
-        out, records=[synthetic_record], threshold=AbsoluteThreshold(0.1), progress=False
+        out,
+        records=[synthetic_record],
+        threshold=AbsoluteThreshold(0.1),
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
+        progress=False,
     )
     expected = derive_iafdb_bank_id("absolute")
     assert result.bank_id == expected
@@ -44,7 +53,13 @@ def test_bank_none_threshold_derives_ptbank_id(
     """The unfiltered (NoThreshold) pretraining path uses the ptbank_ role
     prefix instead of tbank_."""
     out = tmp_path / "bank.h5"
-    result = export_bank(out, records=[synthetic_record], threshold=NoThreshold(), progress=False)
+    result = export_bank(
+        out,
+        records=[synthetic_record],
+        threshold=NoThreshold(),
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
+        progress=False,
+    )
     assert result.bank_id == derive_iafdb_bank_id("none")
     assert result.bank_id.startswith("ptbank_iafdb_")
 
@@ -58,6 +73,7 @@ def test_bank_explicit_id_is_used(synthetic_record: IAFDBRecord, tmp_path: Path)
         out,
         records=[synthetic_record],
         threshold=AbsoluteThreshold(0.1),
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
         bank_id=explicit,
     )
@@ -73,6 +89,7 @@ def test_bank_rejects_malformed_id(synthetic_record: IAFDBRecord, tmp_path: Path
             tmp_path / "bank.h5",
             records=[synthetic_record],
             threshold=AbsoluteThreshold(0.1),
+            target_qrs_pp_mv=TARGET_QRS_PP_MV,
             progress=False,
             bank_id="NOT VALID",
         )
@@ -93,6 +110,7 @@ def test_classifier_output_propagates_source_bank_id(
         out,
         records=[synthetic_record],
         threshold=AbsoluteThreshold(0.1),
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
         output_format="classifier",
         label_fn=label_fn,

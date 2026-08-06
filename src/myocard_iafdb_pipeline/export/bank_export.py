@@ -47,7 +47,6 @@ from myocard_egm_data.banks import (
 )
 from myocard_egm_signal import (
     DEFAULT_BIPOLAR_BAND_HZ,
-    DEFAULT_TARGET_QRS_PP_MV,
     AbsoluteThreshold,
     HealthySegment,
     NoThreshold,
@@ -111,9 +110,9 @@ def export_bank(
     *,
     records: Iterable[IAFDBRecord],
     threshold: ThresholdStrategy,
+    target_qrs_pp_mv: float,
     window_ms: float = DEFAULT_WINDOW_MS,
     hop_ms: float = DEFAULT_HOP_MS,
-    target_qrs_pp_mv: float = DEFAULT_TARGET_QRS_PP_MV,
     band_hz: tuple[float, float] = DEFAULT_BIPOLAR_BAND_HZ,
     overwrite: bool = False,
     progress: bool = False,
@@ -147,10 +146,18 @@ def export_bank(
         Threshold strategy. Operates on the calibrated, band-passed
         peak-to-peak distribution. Use :class:`NoThreshold` to emit every
         window (pretraining banks).
+    target_qrs_pp_mv
+        Calibration target in mV, passed through to R-wave anchoring.
+        **Required** — there is deliberately no default here. It decides
+        what scale the whole corpus is calibrated to, so the value is
+        policy, and policy lives in the executable's config: the one
+        default in the constellation is ``cli/_config.py``'s ``1.0``.
+        egm-signal dropped its own ``DEFAULT_TARGET_QRS_PP_MV`` in v0.3.0
+        for the same reason, after the two copies drifted (1.5 vs 1.0) and
+        the same code calibrated to different scales depending on whether
+        it was entered through the CLI or called directly.
     window_ms, hop_ms
         Sliding-window length and stride in milliseconds.
-    target_qrs_pp_mv
-        Calibration target. Passed through to R-wave anchoring.
     band_hz
         Bipolar band-pass edges (Hz). Defaults to the clinical 30-300 Hz
         band.

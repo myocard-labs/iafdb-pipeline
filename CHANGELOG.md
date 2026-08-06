@@ -28,6 +28,19 @@ All notable changes to `iafdb-pipeline` are documented here. The format follows
 
 ### Changed
 
+- **BREAKING — `export_bank()`'s `target_qrs_pp_mv` is now required** (B22). egm-signal
+  v0.3.0 deleted `DEFAULT_TARGET_QRS_PP_MV` on the library-defaults rule, and this
+  producer follows: the calibration target decides what scale a whole corpus is
+  normalized to, so it is policy, and the one place it is defaulted is the CLI config
+  (`cli/_config.py`, `1.0` mV). Previously the library said 1.5 and the CLI said 1.0, so
+  the same code calibrated to different scales depending on the entry point. **No stored
+  data changes** — every bank on disk came through the CLI, which already passed 1.0.
+  *Migration:* pass the value explicitly to `export_bank(...)`; CLI and YAML users are
+  unaffected.
+- **Re-pin `egm-signal v0.2.0 → v0.4.0`.** Note this is v0.4.0, not the v0.3.0 the B22
+  change was written up under — egm-signal's 0.3.0 release was never tagged, and the
+  commit shipped inside v0.4.0. v0.4.0 is otherwise purely additive here: every
+  threshold, extraction and calibration name this producer imports is unchanged.
 - **Re-pin `egm-contracts v0.5.3 → v0.6.0` and `egm-data v0.5.0 → v0.6.0`** — the Phase-1.5
   Wave-1 coordinated bump. Additive for this producer: a bank regenerated with the same
   config is bit-identical to its pre-migration counterpart, so no bank needs regenerating.

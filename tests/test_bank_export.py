@@ -36,6 +36,11 @@ from myocard_egm_signal import (
 from myocard_iafdb_pipeline.export import export_bank, export_noise_bank
 from myocard_iafdb_pipeline.records import IAFDBRecord
 
+# egm-signal v0.3.0 (B22) removed the library default for the calibration
+# target, so export_bank() now REQUIRES it. 1.0 mV mirrors the CLI config
+# default in cli/_config.py, which is the single place the value is decided.
+TARGET_QRS_PP_MV = 1.0
+
 # ---------------------------------------------------------------------------
 # iafdb_bank — all three threshold strategies
 # ---------------------------------------------------------------------------
@@ -52,6 +57,7 @@ def test_export_bank_absolute_threshold_round_trips(
         out,
         records=[synthetic_record],
         threshold=AbsoluteThreshold(0.1),
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
     )
     assert result.output_path == out
@@ -66,6 +72,26 @@ def test_export_bank_absolute_threshold_round_trips(
     # source_records is what contributed at least one segment; with one
     # input record that passed the threshold it's a 1-tuple.
     assert len(bank.source_records) == 1
+
+
+def test_export_bank_requires_an_explicit_calibration_target(
+    synthetic_record: IAFDBRecord, tmp_path: Path
+) -> None:
+    """Omitting ``target_qrs_pp_mv`` must fail loudly, not fall back.
+
+    egm-signal v0.3.0 (B22) deleted ``DEFAULT_TARGET_QRS_PP_MV`` because
+    two copies of one policy value had drifted — the library said 1.5 mV,
+    this repo's CLI said 1.0 — so the same code calibrated a corpus to a
+    different scale depending on the entry point. Requiring the argument
+    is what makes that class of drift impossible rather than merely fixed,
+    so this asserts the absence of a default as a behaviour."""
+    with pytest.raises(TypeError, match="target_qrs_pp_mv"):
+        export_bank(  # type: ignore[call-arg]
+            tmp_path / "bank.h5",
+            records=[synthetic_record],
+            threshold=AbsoluteThreshold(0.1),
+            progress=False,
+        )
 
 
 def test_iafdb_bank_13_optional_fields_are_absent_not_defaulted(
@@ -90,6 +116,7 @@ def test_iafdb_bank_13_optional_fields_are_absent_not_defaulted(
         out,
         records=[synthetic_record],
         threshold=AbsoluteThreshold(0.1),
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
     )
     assert validate_iafdb_bank(out).ok
@@ -111,6 +138,7 @@ def test_export_bank_percentile_threshold_round_trips(
         out,
         records=[synthetic_record],
         threshold=PercentileThreshold(70.0),
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
     )
     assert validate_iafdb_bank(out).ok
@@ -133,6 +161,7 @@ def test_export_bank_no_filter_writes_threshold_none(
         out,
         records=[synthetic_record],
         threshold=NoThreshold(),
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
     )
     assert validate_iafdb_bank(out).ok
@@ -163,6 +192,7 @@ def test_export_bank_classifier_format_writes_both(
         out,
         records=[synthetic_record],
         threshold=AbsoluteThreshold(0.1),
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
         output_format="classifier",
         label_fn=label_fn,
@@ -193,6 +223,7 @@ def test_export_bank_classifier_unlabeled_policy(
         out,
         records=[synthetic_record],
         threshold=AbsoluteThreshold(0.1),
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
         output_format="classifier",
         label_fn=label_fn,
@@ -217,6 +248,7 @@ def test_export_bank_classifier_format_requires_label_fn(
             tmp_path / "bank.h5",
             records=[synthetic_record],
             threshold=AbsoluteThreshold(0.1),
+            target_qrs_pp_mv=TARGET_QRS_PP_MV,
             progress=False,
             output_format="classifier",
         )
@@ -227,16 +259,27 @@ def test_export_bank_overwrite_guard(synthetic_record: IAFDBRecord, tmp_path: Pa
     producers from silently destroying a previous extraction they meant
     to keep."""
     out = tmp_path / "bank.h5"
-    export_bank(out, records=[synthetic_record], threshold=AbsoluteThreshold(0.1), progress=False)
+    export_bank(
+        out,
+        records=[synthetic_record],
+        threshold=AbsoluteThreshold(0.1),
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
+        progress=False,
+    )
     with pytest.raises(FileExistsError):
         export_bank(
-            out, records=[synthetic_record], threshold=AbsoluteThreshold(0.1), progress=False
+            out,
+            records=[synthetic_record],
+            threshold=AbsoluteThreshold(0.1),
+            target_qrs_pp_mv=TARGET_QRS_PP_MV,
+            progress=False,
         )
     # overwrite=True succeeds.
     export_bank(
         out,
         records=[synthetic_record],
         threshold=AbsoluteThreshold(0.1),
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
         overwrite=True,
     )

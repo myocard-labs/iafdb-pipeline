@@ -220,11 +220,16 @@ physiological scale, using the surface ECG QRS as a common reference.
 4. **Scalar.** With target $\tau$,
    $$ \boxed{\,a_r = \dfrac{\tau}{M_r}\,}. $$
 
-$\tau$ is a configurable target QRS peak-to-peak. **Effective default via
-the CLI/YAML is $\tau = 1.0$ mV**; note the egm-signal library constant
-`DEFAULT_TARGET_QRS_PP_MV` is $1.5$ mV, so a *direct* `export_bank(...)`
-call that omits `target_qrs_pp_mv` uses $1.5$ — a two-layer default split
-flagged in §7. Example: $M_r = 2.0$ mV, $\tau = 1.0 \Rightarrow a_r = 0.5$.
+$\tau$ is a configurable target QRS peak-to-peak, and there is exactly
+**one** place it is defaulted: the CLI/YAML, at $\tau = 1.0$ mV
+(`cli/_config.py`). `export_bank(...)` **requires** the argument — it has
+no default of its own — and egm-signal deleted its
+`DEFAULT_TARGET_QRS_PP_MV` in v0.3.0 for the same reason. Until then the
+library said $1.5$ and this repo's CLI said $1.0$, so the same code
+calibrated a corpus to a different scale depending on whether it was
+entered through the CLI or called directly; requiring the argument makes
+that class of drift impossible rather than merely fixed.
+Example: $M_r = 2.0$ mV, $\tau = 1.0 \Rightarrow a_r = 0.5$.
 
 **Failure modes.** If a record carries no QRS annotations, or none of the
 preferred leads is present, or $M_r \le 0$, `RWaveAnchoring` raises
@@ -430,14 +435,17 @@ curates it).
 Found while writing this doc against the current source — research-relevant
 because they touch the actual calibration scale, and worth reconciling:
 
-1. **Calibration-target default split.** `_config.build_bank_export_config`
-   defaults `calibration.target_qrs_pp_mv` to **1.0 mV**;
-   `egm_signal.r_wave_anchoring.DEFAULT_TARGET_QRS_PP_MV` (the orchestrator
-   signature default) is **1.5 mV**. CLI runs get 1.0; a direct
-   `export_bank(...)` without the kwarg gets 1.5. Different absolute
-   calibrated scale by a factor of 1.5 depending on entry point — decide
-   on one target and align, or document the split intentionally.
-   `docs/usage.md` currently lists 1.0 (matches the CLI).
+1. **Calibration-target default split — RESOLVED 2026-08-06.** This doc
+   originally flagged that `_config.build_bank_export_config` defaulted
+   `calibration.target_qrs_pp_mv` to **1.0 mV** while
+   `egm_signal.r_wave_anchoring.DEFAULT_TARGET_QRS_PP_MV` was **1.5 mV**,
+   so CLI runs and direct `export_bank(...)` calls calibrated to scales a
+   factor of 1.5 apart. Fixed **structurally rather than by aligning the
+   numbers**: egm-signal v0.3.0 deleted its constant and made the target a
+   required argument, and `export_bank` did the same, so the CLI config's
+   `1.0` is now the single place the value is decided (B22). Two copies of
+   a policy value cannot drift if there is only one copy. Kept here rather
+   than deleted so the finding-to-fix trail survives; see §2.1.
 2. **Record-skip claim vs behavior.** `project/architecture.md` says a
    record with no usable surface lead is skipped with a warning; the
    orchestrator loop actually lets `RWaveAnchoring`'s `ValueError`

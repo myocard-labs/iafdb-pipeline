@@ -62,7 +62,7 @@ classifiers = [
 dependencies = [
   "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.6.0",
   "myocard-egm-data @ git+https://github.com/myocard-labs/egm-data.git@v0.6.0",
-  "myocard-egm-signal @ git+https://github.com/myocard-labs/egm-signal.git@v0.2.0",
+  "myocard-egm-signal @ git+https://github.com/myocard-labs/egm-signal.git@v0.4.0",
   # pydantic is used directly now (validating stable bank ids against
   # egm-contracts' common.ArtifactId in ids.py); it also arrives
   # transitively via egm-contracts, but we import it by name so we
