@@ -212,6 +212,26 @@ class ActivationConfig:
     trace_duration_ms: float
     detection: DetectionConfig
     position: PositionBandConfig
+    # Let windows containing more than one detected activation through.
+    #
+    # Default False: the corpus contract is one activation per trace, and a
+    # multi-activation window is a different *kind* of trace in a bank the
+    # classifier reads as uniform.
+    #
+    # Why it is an option at all, and not just a drop. Every IAFDB patient is
+    # in AF or another arrhythmia, so the records are dense with activations
+    # and the fibrillatory side-peaks are exactly what the detection
+    # parameters have to suppress. Mistune them and almost every window holds
+    # a neighbour — which, with multi-activation windows dropped, looks
+    # identical to "the detector found nothing": an empty bank with no
+    # indication of why. Allowing them through turns a silent empty result
+    # into a visible one you can inspect, which is what makes the parameters
+    # tunable at all. Longer term these windows are also the ones likely to
+    # carry information about where fibrotic tissue sits, so they are worth
+    # being able to keep on purpose rather than only by accident.
+    #
+    # Out-of-bounds windows are dropped either way — those have no signal.
+    keep_multi_activation: bool = False
 
 
 @dataclass(frozen=True)
@@ -320,8 +340,16 @@ def _build_activation_config(doc: dict[str, Any], *, fs_hz: float) -> Activation
         threshold_c = float(
             _optional(doc, "activation", "detection", "threshold", "c", default=1.0)
         )
+        # 10.0, not the 5.0 first written here. The threshold is
+        # c*median(g) + lam*MAD(g), so on a channel that is mostly baseline
+        # a small multiplier sits only a couple of noise-sigma up and
+        # ordinary noise peaks register as activations. Measured on the
+        # test fixture, lam=5 finds 16 activations where 3 were planted;
+        # lam=10 finds exactly 3. Still a placeholder — study §8.1 sets the
+        # value against real records — but a placeholder that is not
+        # obviously wrong.
         threshold_lam = float(
-            _optional(doc, "activation", "detection", "threshold", "lam", default=5.0)
+            _optional(doc, "activation", "detection", "threshold", "lam", default=10.0)
         )
     else:
         threshold_q = float(
@@ -369,6 +397,12 @@ def _build_activation_config(doc: dict[str, Any], *, fs_hz: float) -> Activation
     seed_raw = _optional(doc, "activation", "position", "seed", default=None)
     seed = None if seed_raw is None else int(seed_raw)
 
+    keep_multi_raw = _optional(doc, "activation", "keep_multi_activation", default=False)
+    if not isinstance(keep_multi_raw, bool):
+        raise ConfigError(
+            f"activation.keep_multi_activation must be true or false; got {keep_multi_raw!r}"
+        )
+
     return ActivationConfig(
         trace_duration_ms=trace_duration_ms,
         detection=DetectionConfig(
@@ -385,6 +419,7 @@ def _build_activation_config(doc: dict[str, Any], *, fs_hz: float) -> Activation
             refine_radius_ms=refine_radius_ms,
         ),
         position=PositionBandConfig(low=low, high=high, seed=seed),
+        keep_multi_activation=keep_multi_raw,
     )
 
 

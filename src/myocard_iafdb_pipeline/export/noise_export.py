@@ -27,6 +27,7 @@ not assume the signal is in mV.
 from __future__ import annotations
 
 import datetime as _dt
+import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,7 @@ from myocard_iafdb_pipeline.constants import (
     DEFAULT_NOISE_WINDOW_MS,
     SAMPLING_RATE_HZ,
 )
+from myocard_iafdb_pipeline.exceptions import EmptyBankWarning
 from myocard_iafdb_pipeline.ids import derive_noise_bank_id, validate_artifact_id
 from myocard_iafdb_pipeline.records import IAFDBRecord
 
@@ -74,6 +76,9 @@ class NoiseBankExportResult:
     n_records_processed: int
     per_patient_counts: dict[str, int]
     per_channel_counts: dict[str, int]
+    # False when no segment survived, so neither the bank nor its sidecar
+    # was written. The paths still report where they would have gone.
+    written: bool = True
 
 
 def _threshold_provenance(strategy: NoiseSegmentStrategy) -> tuple[str, float]:
@@ -210,6 +215,30 @@ def export_noise_bank(
                     )
                 all_segments.append(seg)
 
+    # Nothing survived: warn and write nothing — neither the bank nor its
+    # sidecar. An empty noise bank is worse than useless here: the mixer
+    # draws from it, so one that exists but holds no traces fails at mix
+    # time, far from the run that produced it.
+    if not all_segments:
+        warnings.warn(
+            f"No noise segments survived from {n_records_processed} record(s) — "
+            f"nothing written to {bank_path}. The quiet threshold may be below "
+            f"every window's amplitude.",
+            EmptyBankWarning,
+            stacklevel=2,
+        )
+        return NoiseBankExportResult(
+            bank_path=bank_path,
+            run_record_path=run_record_path,
+            bank_id=resolved_bank_id,
+            n_segments=0,
+            source_records=(),
+            n_records_processed=n_records_processed,
+            per_patient_counts={},
+            per_channel_counts={},
+            written=False,
+        )
+
     # Build the (slim) Pydantic bank model.
     pyd_bank = _build_noise_bank_model(all_segments, bank_id=resolved_bank_id)
     write_noise_bank(pyd_bank, bank_path, overwrite=overwrite)
@@ -241,8 +270,6 @@ def export_noise_bank(
                 # downstream consumers don't accidentally rescale.
                 "calibration_scalar": [1.0] * len(all_segments),
             }
-            if all_segments
-            else None
         ),
     )
     write_noise_bank_run_record(run_record_path, run_record)

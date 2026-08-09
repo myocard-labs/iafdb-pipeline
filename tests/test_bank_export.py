@@ -33,6 +33,7 @@ from myocard_egm_signal import (
     PercentileThreshold,
 )
 
+from myocard_iafdb_pipeline.exceptions import EmptyBankWarning
 from myocard_iafdb_pipeline.export import export_bank, export_noise_bank
 from myocard_iafdb_pipeline.records import IAFDBRecord
 
@@ -425,3 +426,83 @@ def test_export_noise_bank_overwrite_guard(synthetic_record: IAFDBRecord, tmp_pa
         progress=False,
         overwrite=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Empty banks are not written
+# ---------------------------------------------------------------------------
+
+
+def test_no_surviving_segments_writes_no_bank(
+    synthetic_record: IAFDBRecord, tmp_path: Path
+) -> None:
+    """A threshold nothing clears must leave no file behind.
+
+    An empty bank is a valid document and a useless artifact — and its
+    presence on disk reads as a successful run, so the emptiness surfaces
+    much later, to whoever tries to use it. Warning and writing nothing
+    keeps the failure attached to the run that caused it."""
+    out = tmp_path / "bank.h5"
+    with pytest.warns(EmptyBankWarning, match="No segments survived"):
+        result = export_bank(
+            out,
+            records=[synthetic_record],
+            threshold=AbsoluteThreshold(1e6),  # far above any real amplitude
+            target_qrs_pp_mv=TARGET_QRS_PP_MV,
+            progress=False,
+        )
+
+    assert result.n_segments == 0
+    assert result.written is False
+    assert not out.exists()
+    # The path still reports where it would have gone, so a caller can say so.
+    assert result.output_path == out
+
+
+def test_no_surviving_segments_writes_no_classifier_sibling(
+    synthetic_record: IAFDBRecord, tmp_path: Path
+) -> None:
+    """The ClassifierBank sibling is skipped too — an empty one would be
+    handed straight to a trainer."""
+    out = tmp_path / "bank.h5"
+
+    def label_fn(bank: object) -> tuple[np.ndarray, dict[int, str]]:
+        signal = bank.traces.signal  # type: ignore[attr-defined]
+        return np.zeros(len(signal), dtype=np.int64), {0: "healthy"}
+
+    with pytest.warns(EmptyBankWarning):
+        result = export_bank(
+            out,
+            records=[synthetic_record],
+            threshold=AbsoluteThreshold(1e6),
+            target_qrs_pp_mv=TARGET_QRS_PP_MV,
+            progress=False,
+            output_format="classifier",
+            label_fn=label_fn,
+        )
+
+    assert result.written is False
+    assert result.classifier_path is None
+    assert not out.exists()
+    assert not out.with_suffix(".classifier.h5").exists()
+
+
+def test_no_surviving_noise_segments_writes_neither_bank_nor_sidecar(
+    synthetic_record: IAFDBRecord, tmp_path: Path
+) -> None:
+    """Same rule on the noise side, where the stakes are a bit different:
+    the mixer draws from this bank, so an empty one that exists fails at
+    mix time — far from the run that produced it."""
+    bank_path = tmp_path / "noise.h5"
+    with pytest.warns(EmptyBankWarning, match="No noise segments survived"):
+        result = export_noise_bank(
+            bank_path,
+            records=[synthetic_record],
+            strategy=AbsoluteQuietThreshold(1e-12),  # below every window
+            progress=False,
+        )
+
+    assert result.n_segments == 0
+    assert result.written is False
+    assert not bank_path.exists()
+    assert not result.run_record_path.exists()

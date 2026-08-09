@@ -427,7 +427,7 @@ def test_activation_mode_defaults_are_usable(tmp_path: Path) -> None:
     assert act.trace_duration_ms == 192.0
     assert act.detection.curve == "rectified_derivative"
     assert act.detection.threshold_rule == "median_mad"
-    assert (act.detection.threshold_c, act.detection.threshold_lam) == (1.0, 5.0)
+    assert (act.detection.threshold_c, act.detection.threshold_lam) == (1.0, 10.0)
     assert act.detection.refine_curve is None
     # Central band, per the flutter position-bias ruling.
     assert (act.position.low, act.position.high) == (0.4, 0.6)
@@ -686,6 +686,7 @@ _BANK_KEYS = [
     "windowing.band_hz",
     "calibration.target_qrs_pp_mv",
     "activation.trace_duration_ms",
+    "activation.keep_multi_activation",
     "activation.detection.curve",
     "activation.detection.botteron_band_hz",
     "activation.detection.botteron_lowpass_hz",

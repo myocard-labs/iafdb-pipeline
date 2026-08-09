@@ -32,6 +32,7 @@ Threshold strategies (from :mod:`~myocard_egm_signal.thresholds`):
 from __future__ import annotations
 
 import datetime as _dt
+import warnings
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +58,7 @@ from myocard_egm_signal import (
 )
 
 from myocard_iafdb_pipeline.constants import BIPOLAR_CHANNELS, SAMPLING_RATE_HZ
+from myocard_iafdb_pipeline.exceptions import EmptyBankWarning
 from myocard_iafdb_pipeline.ids import derive_iafdb_bank_id, validate_artifact_id
 from myocard_iafdb_pipeline.records import IAFDBRecord
 
@@ -78,6 +80,11 @@ class BankExportResult:
 
     ``classifier_path`` is set only when ``output_format="classifier"``;
     None otherwise.
+
+    ``written`` is False when no segment survived and the run therefore
+    wrote nothing. ``output_path`` still reports where the bank *would*
+    have gone, so a caller can say so; check ``written`` before treating
+    it as a file that exists.
     """
 
     output_path: Path
@@ -88,6 +95,7 @@ class BankExportResult:
     n_records_processed: int
     per_patient_counts: dict[str, int]
     per_channel_counts: dict[str, int]
+    written: bool = True
 
 
 def _threshold_provenance(threshold: ThresholdStrategy) -> tuple[str, float | None]:
@@ -257,6 +265,32 @@ def export_bank(
                 all_segments.append(seg)
                 all_scalars.append(cal.scalar)
 
+    # Nothing survived: warn and write nothing. A bank with an empty
+    # traces group validates fine and is useless — and worse, its presence
+    # on disk reads as a successful run, so the emptiness is discovered
+    # much later by whoever tries to use it. Better to leave no file and
+    # say why, while the settings that produced it are still in hand.
+    if not all_segments:
+        warnings.warn(
+            f"No segments survived from {n_records_processed} record(s) — "
+            f"no bank written to {output_path}. The threshold may be above "
+            f"every window's amplitude, or (in activation mode) the detection "
+            f"settings may be leaving a neighbouring activation in every window.",
+            EmptyBankWarning,
+            stacklevel=2,
+        )
+        return BankExportResult(
+            output_path=output_path,
+            bank_id=resolved_bank_id,
+            classifier_path=None,
+            n_segments=0,
+            source_records=(),
+            n_records_processed=n_records_processed,
+            per_patient_counts={},
+            per_channel_counts={},
+            written=False,
+        )
+
     # Build the Pydantic model — the hand-off to egm-data.
     pyd_bank = _build_iafdb_bank_model(
         segments=all_segments,
@@ -352,7 +386,6 @@ def _build_iafdb_bank_model(
     edge of the very distribution T1 exists to compare. Absence means
     "unknown", per the ``ActivationPosition`` contract.
     """
-    n = len(segments)
     signal_list = [seg.signal.astype(np.float32, copy=False).tolist() for seg in segments]
 
     doc: dict[str, Any] = {
@@ -381,9 +414,6 @@ def _build_iafdb_bank_model(
             "calibration_scalar": [float(c) for c in scalars],
         },
     }
-    # Empty banks are allowed — the schema accepts n=0; the writer
-    # serializes an empty traces group. This handles the case where no
-    # record contributed a segment under the chosen threshold.
-    if n == 0:
-        doc["traces"]["signal"] = []
+    # No empty-bank branch: export_bank returns before reaching here when
+    # nothing survived, so `segments` is always non-empty by this point.
     return _iafdb_bank_models.IafdbBank.model_validate(doc)

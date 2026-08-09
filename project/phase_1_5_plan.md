@@ -2,7 +2,7 @@
 
 **Repo:** iafdb-pipeline · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 5/9 steps done — Wave 1 complete for this repo (S0 B22, S1 IAF3, S5+S7 the `theory.md` graduation). Remaining: S2–S4 (IAF1) and S6 (B11b), both **Wave 2**, plus S8 phase-exit.
+**Status:** in progress · **Progress:** 6/9 steps done — Wave 1 complete for this repo (S0 B22, S1 IAF3, S5+S7 the `theory.md` graduation). Remaining: S2–S4 (IAF1) and S6 (B11b), both **Wave 2**, plus S8 phase-exit.
 **Repo estimate:** **12–23.75 h active · 11 points** across B22 · IAF1 · B20 · B11a · B11b and the
 `theory.md` trim. Cold-start estimates are by **analogy**, not arithmetic —
 `estimation_ledger.csv` is empty, so there is no time-per-point rate to multiply by yet. Ranges are
@@ -197,7 +197,7 @@ Each step is one focused commit, ends green (`ruff format src tests` + `ruff che
   role now belongs to the gitignored `configs/`). Coverage was **measured** rather than eyeballed —
   five keys and three enum values had no example — and is now enforced by tests.
 
-### S3 — Activation-based extraction path (IAF1) ☐ (3–6 h)
+### S3 — Activation-based extraction path (IAF1) ✅ (2026-08-08)
 
 - **Change:** new `export/activation_extract.py`. Per record: calibrate (unchanged), band-pass the
   **whole record** once, then per bipolar channel — detect the train via SIG1's

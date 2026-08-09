@@ -62,7 +62,7 @@ activation:
       # so it absorbs the amplitude variation across records and electrodes.
       rule: median_mad
       c:    1.0
-      lam:  5.0
+      lam:  10.0
       # percentile alternative:
       #   rule: percentile
       #   q:    99.0
@@ -81,6 +81,19 @@ activation:
     # refine:
     #   curve:     rectified_derivative
     #   radius_ms: 10.0
+
+  # Let windows holding more than one detected activation through. Default
+  # false: the corpus contract is one activation per trace.
+  #
+  # Worth knowing while tuning. Every IAFDB patient is in AF or another
+  # arrhythmia, so the records are dense with activations and the
+  # fibrillatory side-peaks are what the detection settings above have to
+  # suppress. Get them wrong and nearly every window holds a neighbour —
+  # which, with these dropped, produces an empty bank that looks exactly
+  # like "the detector found nothing". Setting this true tells the two
+  # apart, and the per-channel tallies then show how many kept windows are
+  # multi-activation. Out-of-bounds windows are dropped either way.
+  keep_multi_activation: false
 
   position:
     # The band P that each activation's position is drawn from, as a fraction
