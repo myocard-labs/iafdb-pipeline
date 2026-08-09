@@ -1,0 +1,35 @@
+# IAFDB healthy-segment bank — percentile (scale-invariant) selection.
+#
+# The alternative to an absolute mV cutoff. A percentile threshold is computed
+# per record over that record's own pooled peak-to-peak distribution, so the
+# same setting is a different mV cut in every record.
+#
+# When to prefer it: an absolute cutoff assumes calibration succeeded and that
+# one mV number is meaningful across every record. A percentile makes no such
+# assumption — it keeps "the loudest N% of this record" regardless of scale,
+# which is the honest choice when comparing records whose amplitudes differ for
+# acquisition reasons rather than physiological ones.
+#
+# The trade: the retained fraction is fixed by construction, so a record with
+# no genuinely high-voltage tissue still contributes its top slice.
+
+data:
+  data_dir: ../data/iafdb
+  output:   ../banks/iafdb_healthy_p70.h5
+
+format:
+  type: iafdb
+
+threshold:
+  mode:  percentile
+  value: 70.0                              # 0..100; keep windows above this percentile
+
+windowing:
+  window_ms: 512.0
+  hop_ms:    256.0
+
+calibration:
+  # Still applied, and still recorded per trace — calibration and selection are
+  # independent. A percentile cut is scale-invariant, but the emitted signal is
+  # calibrated either way, so banks stay comparable downstream.
+  target_qrs_pp_mv: 1.0

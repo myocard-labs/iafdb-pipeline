@@ -1,0 +1,97 @@
+# IAFDB activation-anchored bank (IAF1) — one window per detected activation.
+#
+# The alternative to the sliding-window mode every other example uses. Instead
+# of stepping a fixed window across the record and keeping whatever clears an
+# amplitude threshold, this detects the activation train per channel and cuts
+# ONE window per activation, anchored at a fractional position drawn from a
+# band. Windows that run off the record, or that contain a neighbouring
+# activation, are dropped.
+#
+# Why: synthetic traces are single clean activations at a fixed position while
+# IAFDB windows are multibeat with the activation wherever it fell. Matching
+# the two on framing removes a format-driven slice of the sim-to-real gap, and
+# *varying* the position stops the classifier keying on position instead of
+# morphology.
+#
+# NOTE ON THE VALUES BELOW. egm-signal ships no defaults for any of these —
+# threshold multipliers, prominence floors, refractory intervals and position
+# ranges decide what the science is, so they belong to the pipeline that knows
+# its data. The values here are this producer's starting points; study §8.1
+# sets the ones that get used for real. Treat them as a working configuration,
+# not a recommendation.
+
+data:
+  data_dir: ../data/iafdb
+  output:   ../banks/iafdb_activation.h5
+
+format:
+  type: iafdb
+
+threshold:
+  # Amplitude selection still applies — it decides which *channels/windows*
+  # carry usable signal, independently of where the activations are.
+  mode:  absolute
+  value: 0.2                            # Kosiuk AF-adjusted
+
+windowing:
+  mode: activation                      # sliding (default) | activation
+  band_hz: [30.0, 300.0]                # clinical bipolar band; applies to both modes
+  # window_ms / hop_ms are rejected under mode: activation — window length is
+  # activation.trace_duration_ms, and windows are anchored, not stepped.
+
+activation:
+  # T, the coupled trace length. Must be a multiple of 64 samples (192 ms at
+  # 1 kHz): the classifier's MobileViT-1D stem requires it, and an off-grid
+  # length gets zero-padded downstream, which would shift the activation off
+  # the position placed here.
+  trace_duration_ms: 192.0
+
+  detection:
+    # rectified_derivative | teager_kaiser | botteron_envelope.
+    # The first two spike at every steep deflection; the envelope smooths a
+    # fractionated complex into a single bump before anything downstream sees
+    # it, which matters on fibrotic tissue where one activation has several
+    # deflections.
+    curve: rectified_derivative
+
+    # botteron_band_hz / botteron_lowpass_hz apply only to botteron_envelope
+    # and are rejected for the other curves.
+
+    threshold:
+      # median_mad: tau = c * median(g) + lam * MAD(g) — adapts per channel,
+      # so it absorbs the amplitude variation across records and electrodes.
+      rule: median_mad
+      c:    1.0
+      lam:  5.0
+      # percentile alternative:
+      #   rule: percentile
+      #   q:    99.0
+
+    # Minimum peak prominence on the detection curve; null keeps every local
+    # maximum above the threshold.
+    min_prominence: null
+
+    # Physiological floor on activation spacing — a time rule, not an
+    # amplitude one. Too short and one fractionated complex reads as several
+    # activations; too long and two genuine activations merge into one.
+    refractory_ms: 50.0
+
+    # Optional second pass: find anchors on a smooth curve, then re-locate
+    # each on a sharper one within radius_ms. Omit the block to skip it.
+    # refine:
+    #   curve:     rectified_derivative
+    #   radius_ms: 10.0
+
+  position:
+    # The band P that each activation's position is drawn from, as a fraction
+    # of the trace. Deliberately CENTRAL: on fast regular (flutter) rhythm the
+    # probability a window survives the multi-beat drop depends on position,
+    # and a central band both sidesteps that bias and is where yield is
+    # highest. Still varied, so the positional shortcut stays blocked.
+    # Collapse to a point (low == high) for the fixed-position baseline arm.
+    low:  0.4
+    high: 0.6
+    seed: 20260808                      # null for a fresh stream each run
+
+calibration:
+  target_qrs_pp_mv: 1.0

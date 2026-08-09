@@ -8,6 +8,21 @@ All notable changes to `iafdb-pipeline` are documented here. The format follows
 
 ### Added
 
+- **Activation-anchored windowing config** (`windowing.mode: sliding | activation`, IAF1).
+  The sliding-window path is unchanged and remains the default, so every existing
+  config keeps meaning exactly what it meant. The new `activation:` block configures
+  the detection chain (curve · threshold rule · prominence · refractory · optional
+  two-stage refiner) and the position band `𝒫` that each window's activation is
+  anchored at. Every value lives here because egm-signal deliberately ships none —
+  they decide what the science is.
+  - **Cross-mode keys are rejected, not ignored.** `window_ms` under `activation`, or
+    an `activation:` block under `sliding`, raises. Silently dropping a key the user
+    set is how a config comes to mean something other than it says.
+  - **Off-grid trace lengths warn** (`ConfigWarning`) rather than failing. A multiple
+    of 64 samples suits egm-classifier's current MobileViT-1D, but that is *that
+    consumer's* constraint and would evaporate if the model changed. The length asked
+    for is produced exactly; nothing is padded or clipped here.
+
 - **`noise_bank` `bank_id` on the bank itself** (`noise_bank` 1.1, B20). The stable
   cross-artifact id was previously carried only on the `noise_bank_run_record.json`
   sidecar; it is now also stamped on the HDF5 root attr, so a consumer can identify a
@@ -27,6 +42,16 @@ All notable changes to `iafdb-pipeline` are documented here. The format follows
   config-load, before the export run, instead of at the write step (Refactor Step 8).
 
 ### Changed
+
+- **`examples/` pruned to one worked example per option.** The folder had grown as a
+  scratch space for one-off runs (that role now belongs to the gitignored `configs/`),
+  leaving near-duplicates that differed only in a threshold value. Measured the actual
+  coverage instead of guessing: five config keys and three enum values had no example
+  at all — `format.classifier_output`, `data.run_record_output`, bank-side
+  `threshold.mode: percentile`, and the Botteron / percentile-rule / refiner detection
+  options. Now 9 files covering every key and every enum value, with three new tests
+  asserting that — so an option can't ship without a worked example again, and an
+  example can't rot out of sync with the loader.
 
 - **BREAKING — `export_bank()`'s `target_qrs_pp_mv` is now required** (B22). egm-signal
   v0.3.0 deleted `DEFAULT_TARGET_QRS_PP_MV` on the library-defaults rule, and this

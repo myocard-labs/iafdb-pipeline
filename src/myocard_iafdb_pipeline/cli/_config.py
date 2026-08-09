@@ -19,6 +19,7 @@ Schema documented in detail in the example YAML files under
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -26,11 +27,21 @@ from typing import Any, Literal
 import yaml
 from myocard_egm_signal import DEFAULT_BIPOLAR_BAND_HZ
 
+from myocard_iafdb_pipeline.constants import SAMPLING_RATE_HZ
 from myocard_iafdb_pipeline.ids import validate_artifact_id
 
 
 class ConfigError(ValueError):
     """Raised when a config file is malformed or missing required keys."""
+
+
+class ConfigWarning(UserWarning):
+    """A config is valid here but likely to disappoint a known consumer.
+
+    Its own category so a caller can silence it (or promote it to an
+    error) without touching unrelated warnings — the distinction being
+    that this producer has no opinion, but something downstream might.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +89,23 @@ def _optional(doc: dict[str, Any], *path: str, default: Any = None) -> Any:
     return node
 
 
+def _present(doc: dict[str, Any], *path: str) -> bool:
+    """True if ``path`` is explicitly set in the document.
+
+    Distinct from ``_optional(...) is not None``: it tells apart "the user
+    wrote this key" from "the key defaulted". Needed to reject keys that
+    belong to the *other* windowing mode — silently ignoring a key the
+    user deliberately set is how a config comes to mean something other
+    than it says.
+    """
+    node: Any = doc
+    for k in path:
+        if not isinstance(node, dict) or k not in node:
+            return False
+        node = node[k]
+    return True
+
+
 def _resolve_path(value: str | None, config_dir: Path) -> Path | None:
     """Resolve a YAML-supplied path string against the config file's dir.
 
@@ -99,6 +127,92 @@ def _resolve_path(value: str | None, config_dir: Path) -> Path | None:
 OutputFormat = Literal["iafdb", "classifier"]
 ThresholdMode = Literal["absolute", "percentile", "none"]
 
+# How windows are cut from a record.
+#
+# ``sliding`` is the shipped behavior: a fixed-length window every ``hop_ms``,
+# kept or dropped on its peak-to-peak amplitude. ``activation`` is IAF1: detect
+# the activation train, then cut one window per activation anchored at a drawn
+# fractional position. The two are different sampling schemes over the same
+# records, not two settings of one scheme, which is why the mode selects a
+# whole config block rather than a flag.
+WindowingMode = Literal["sliding", "activation"]
+
+# The detection curve `g` that peaks at activations (egm-signal's
+# DetectionPreprocessor family). Sharpness vs noise-robustness: the first two
+# spike at every steep deflection, the envelope smooths a fractionated complex
+# into one bump before anything downstream sees it.
+DetectionCurve = Literal["rectified_derivative", "teager_kaiser", "botteron_envelope"]
+
+# The rule that turns the detection curve into an amplitude threshold.
+DetectionThresholdRule = Literal["median_mad", "percentile"]
+
+# A trace length that is a multiple of this suits egm-classifier's current
+# MobileViT-1D, whose stem downsamples 32x and whose stage-5 block takes patch
+# size 2. It is **that consumer's** constraint, not this producer's, and it
+# would evaporate if the model changed — so an off-grid length is a *warning*
+# here, never an error. Anyone using this tool without that classifier is
+# entitled to whatever length they asked for.
+#
+# What is worth warning about: egm-classifier will zero-pad an off-grid trace,
+# and padding shifts the activation off the fractional position this producer
+# placed it at — re-introducing the positional regularity the activation
+# anchoring exists to remove. We emit exactly what was asked for and say so;
+# padding or clipping to fit is deliberately NOT done here (a pad/clip policy
+# would be a project-level decision, not a quiet side effect of loading a
+# config).
+CLASSIFIER_LENGTH_MULTIPLE_SAMPLES = 64
+
+
+@dataclass(frozen=True)
+class DetectionConfig:
+    """Detection-chain settings: curve -> threshold -> select -> suppress."""
+
+    curve: DetectionCurve
+    # Botteron only; ignored (and rejected) for the other two curves.
+    botteron_band_hz: tuple[float, float] | None
+    botteron_lowpass_hz: float | None
+
+    threshold_rule: DetectionThresholdRule
+    # median_mad: tau = c * median(g) + lam * MAD(g)
+    threshold_c: float | None
+    threshold_lam: float | None
+    # percentile: tau = percentile(g, q)
+    threshold_q: float | None
+
+    # LocalMaximaSelector; None = keep every local maximum above tau.
+    min_prominence: float | None
+    # GreedyHeightSuppressor, in ms so it is rate-independent. This is the
+    # physiological floor on activation spacing, NOT an amplitude rule.
+    refractory_ms: float
+
+    # Optional TwoStageRefiner: re-locate each anchor on a sharper curve
+    # within a small radius, after a smoothed curve found it.
+    refine_curve: DetectionCurve | None
+    refine_radius_ms: float | None
+
+
+@dataclass(frozen=True)
+class PositionBandConfig:
+    """The band `P` that each window's activation position is drawn from.
+
+    A fraction of the trace: 0.0 puts the activation on the first sample,
+    1.0 on the last. Collapsing the band to a point (``low == high``) is
+    the fixed-position baseline arm of the A/B, not a special code path.
+    """
+
+    low: float
+    high: float
+    seed: int | None
+
+
+@dataclass(frozen=True)
+class ActivationConfig:
+    """The ``activation:`` block — required iff ``windowing.mode`` is it."""
+
+    trace_duration_ms: float
+    detection: DetectionConfig
+    position: PositionBandConfig
+
 
 @dataclass(frozen=True)
 class BankExportConfig:
@@ -119,12 +233,159 @@ class BankExportConfig:
     threshold_value: float | None
 
     # windowing
+    windowing_mode: WindowingMode
     window_ms: float
     hop_ms: float
     band_hz: tuple[float, float]
 
+    # activation windowing — set iff windowing_mode == "activation"
+    activation: ActivationConfig | None
+
     # calibration
     target_qrs_pp_mv: float
+
+
+def _build_activation_config(doc: dict[str, Any], *, fs_hz: float) -> ActivationConfig:
+    """Parse + validate the ``activation:`` block.
+
+    Every value here is a **policy** choice: egm-signal deliberately ships
+    no defaults for threshold multipliers, prominence floors, refractory
+    intervals, position ranges or window lengths, because they decide what
+    the science is. The defaults below are this producer's, and study §8.1
+    sets the values that actually get used.
+    """
+    trace_duration_ms = float(_optional(doc, "activation", "trace_duration_ms", default=192.0))
+    if trace_duration_ms <= 0:
+        raise ConfigError(f"activation.trace_duration_ms must be positive; got {trace_duration_ms}")
+    samples = round(trace_duration_ms * 1e-3 * fs_hz)
+    if samples % CLASSIFIER_LENGTH_MULTIPLE_SAMPLES != 0:
+        lower = samples // CLASSIFIER_LENGTH_MULTIPLE_SAMPLES * CLASSIFIER_LENGTH_MULTIPLE_SAMPLES
+        upper = lower + CLASSIFIER_LENGTH_MULTIPLE_SAMPLES
+        warnings.warn(
+            f"activation.trace_duration_ms={trace_duration_ms:g} is {samples} samples at "
+            f"{fs_hz:g} Hz, which is not a multiple of "
+            f"{CLASSIFIER_LENGTH_MULTIPLE_SAMPLES}. Traces of this length are produced as "
+            f"asked — nothing is padded or clipped here — but myocard-egm-classifier's "
+            f"current MobileViT-1D needs a multiple of "
+            f"{CLASSIFIER_LENGTH_MULTIPLE_SAMPLES} and will zero-pad them, which shifts each "
+            f"activation off the position this producer placed it at. If the bank is headed "
+            f"for that classifier, {lower} or {upper} samples "
+            f"({lower * 1000 / fs_hz:g} or {upper * 1000 / fs_hz:g} ms) avoid the padding.",
+            ConfigWarning,
+            stacklevel=2,
+        )
+
+    curve = _optional(doc, "activation", "detection", "curve", default="rectified_derivative")
+    valid_curves = ("rectified_derivative", "teager_kaiser", "botteron_envelope")
+    if curve not in valid_curves:
+        raise ConfigError(
+            f"activation.detection.curve must be one of {valid_curves}; got {curve!r}"
+        )
+
+    # Botteron's band/low-pass describe that curve only. Accepting them for
+    # the others would silently ignore a deliberate setting.
+    botteron_keys_set = _present(doc, "activation", "detection", "botteron_band_hz") or _present(
+        doc, "activation", "detection", "botteron_lowpass_hz"
+    )
+    if curve != "botteron_envelope" and botteron_keys_set:
+        raise ConfigError(
+            "activation.detection.botteron_* apply only to "
+            f"curve='botteron_envelope'; got curve={curve!r}"
+        )
+    botteron_band_hz: tuple[float, float] | None = None
+    botteron_lowpass_hz: float | None = None
+    if curve == "botteron_envelope":
+        raw_band = _optional(
+            doc, "activation", "detection", "botteron_band_hz", default=[40.0, 250.0]
+        )
+        if not (isinstance(raw_band, list) and len(raw_band) == 2):
+            raise ConfigError(
+                "activation.detection.botteron_band_hz must be a two-element list [low, high]."
+            )
+        botteron_band_hz = (float(raw_band[0]), float(raw_band[1]))
+        botteron_lowpass_hz = float(
+            _optional(doc, "activation", "detection", "botteron_lowpass_hz", default=20.0)
+        )
+
+    rule = _optional(doc, "activation", "detection", "threshold", "rule", default="median_mad")
+    if rule not in ("median_mad", "percentile"):
+        raise ConfigError(
+            f"activation.detection.threshold.rule must be 'median_mad' or "
+            f"'percentile'; got {rule!r}"
+        )
+    threshold_c: float | None = None
+    threshold_lam: float | None = None
+    threshold_q: float | None = None
+    if rule == "median_mad":
+        threshold_c = float(
+            _optional(doc, "activation", "detection", "threshold", "c", default=1.0)
+        )
+        threshold_lam = float(
+            _optional(doc, "activation", "detection", "threshold", "lam", default=5.0)
+        )
+    else:
+        threshold_q = float(
+            _optional(doc, "activation", "detection", "threshold", "q", default=99.0)
+        )
+        if not 0.0 <= threshold_q <= 100.0:
+            raise ConfigError(
+                f"activation.detection.threshold.q must be a percentile in [0, 100]; "
+                f"got {threshold_q}"
+            )
+
+    min_prominence_raw = _optional(doc, "activation", "detection", "min_prominence", default=None)
+    min_prominence = None if min_prominence_raw is None else float(min_prominence_raw)
+
+    refractory_ms = float(_optional(doc, "activation", "detection", "refractory_ms", default=50.0))
+    if refractory_ms <= 0:
+        raise ConfigError(
+            f"activation.detection.refractory_ms must be positive; got {refractory_ms}"
+        )
+
+    refine_curve_raw = _optional(doc, "activation", "detection", "refine", "curve", default=None)
+    refine_curve: DetectionCurve | None = None
+    refine_radius_ms: float | None = None
+    if refine_curve_raw is not None:
+        if refine_curve_raw not in valid_curves:
+            raise ConfigError(
+                f"activation.detection.refine.curve must be one of {valid_curves}; "
+                f"got {refine_curve_raw!r}"
+            )
+        refine_curve = refine_curve_raw
+        refine_radius_ms = float(
+            _optional(doc, "activation", "detection", "refine", "radius_ms", default=10.0)
+        )
+        if refine_radius_ms <= 0:
+            raise ConfigError(
+                f"activation.detection.refine.radius_ms must be positive; got {refine_radius_ms}"
+            )
+
+    low = float(_optional(doc, "activation", "position", "low", default=0.4))
+    high = float(_optional(doc, "activation", "position", "high", default=0.6))
+    if not 0.0 <= low <= high <= 1.0:
+        raise ConfigError(
+            f"activation.position must satisfy 0 <= low <= high <= 1; got low={low}, high={high}"
+        )
+    seed_raw = _optional(doc, "activation", "position", "seed", default=None)
+    seed = None if seed_raw is None else int(seed_raw)
+
+    return ActivationConfig(
+        trace_duration_ms=trace_duration_ms,
+        detection=DetectionConfig(
+            curve=curve,
+            botteron_band_hz=botteron_band_hz,
+            botteron_lowpass_hz=botteron_lowpass_hz,
+            threshold_rule=rule,
+            threshold_c=threshold_c,
+            threshold_lam=threshold_lam,
+            threshold_q=threshold_q,
+            min_prominence=min_prominence,
+            refractory_ms=refractory_ms,
+            refine_curve=refine_curve,
+            refine_radius_ms=refine_radius_ms,
+        ),
+        position=PositionBandConfig(low=low, high=high, seed=seed),
+    )
 
 
 def _validated_id(value: Any, *, field_path: str) -> str | None:
@@ -179,12 +440,38 @@ def build_bank_export_config(doc: dict[str, Any]) -> BankExportConfig:
     threshold_value_raw = _optional(doc, "threshold", "value", default=None)
     threshold_value = None if threshold_mode_raw == "none" else float(threshold_value_raw or 0.2)
 
+    windowing_mode = _optional(doc, "windowing", "mode", default="sliding")
+    if windowing_mode not in ("sliding", "activation"):
+        raise ConfigError(
+            f"windowing.mode must be 'sliding' or 'activation'; got {windowing_mode!r}"
+        )
+
     window_ms = float(_optional(doc, "windowing", "window_ms", default=512.0))
     hop_ms = float(_optional(doc, "windowing", "hop_ms", default=256.0))
     band_hz_raw = _optional(doc, "windowing", "band_hz", default=list(DEFAULT_BIPOLAR_BAND_HZ))
     if not (isinstance(band_hz_raw, list) and len(band_hz_raw) == 2):
         raise ConfigError("windowing.band_hz must be a two-element list [low, high].")
     band_hz = (float(band_hz_raw[0]), float(band_hz_raw[1]))
+
+    # The two modes take disjoint settings, so a key belonging to the mode
+    # you are not in is always a mistake — usually a half-finished edit.
+    # Rejecting beats ignoring: a silently-dropped window_ms reads as
+    # "windows are 512 ms" to whoever wrote it.
+    activation: ActivationConfig | None = None
+    if windowing_mode == "activation":
+        for unused in ("window_ms", "hop_ms"):
+            if _present(doc, "windowing", unused):
+                raise ConfigError(
+                    f"windowing.{unused} has no meaning under mode='activation' — windows are "
+                    f"anchored on detected activations, not stepped at a fixed stride. "
+                    f"Trace length is activation.trace_duration_ms."
+                )
+        activation = _build_activation_config(doc, fs_hz=SAMPLING_RATE_HZ)
+    elif _present(doc, "activation"):
+        raise ConfigError(
+            "an 'activation:' block is set but windowing.mode is 'sliding' — "
+            "set mode: activation to use it, or remove the block."
+        )
 
     # The constellation's ONE target-amplitude default. egm-signal removed
     # its own (v0.3.0, B22) on the library-defaults rule, and
@@ -210,9 +497,11 @@ def build_bank_export_config(doc: dict[str, Any]) -> BankExportConfig:
         classifier_output=classifier_output,
         threshold_mode=threshold_mode_raw,
         threshold_value=threshold_value,
+        windowing_mode=windowing_mode,
         window_ms=window_ms,
         hop_ms=hop_ms,
         band_hz=band_hz,
+        activation=activation,
         target_qrs_pp_mv=target_qrs_pp_mv,
     )
 

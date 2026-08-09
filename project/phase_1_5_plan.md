@@ -2,7 +2,7 @@
 
 **Repo:** iafdb-pipeline · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 4/9 steps done — Wave 1 complete for this repo (S0 B22, S1 IAF3, S5+S7 the `theory.md` graduation). Remaining: S2–S4 (IAF1) and S6 (B11b), both **Wave 2**, plus S8 phase-exit.
+**Status:** in progress · **Progress:** 5/9 steps done — Wave 1 complete for this repo (S0 B22, S1 IAF3, S5+S7 the `theory.md` graduation). Remaining: S2–S4 (IAF1) and S6 (B11b), both **Wave 2**, plus S8 phase-exit.
 **Repo estimate:** **12–23.75 h active · 11 points** across B22 · IAF1 · B20 · B11a · B11b and the
 `theory.md` trim. Cold-start estimates are by **analogy**, not arithmetic —
 `estimation_ledger.csv` is empty, so there is no time-per-point rate to multiply by yet. Ranges are
@@ -176,7 +176,7 @@ Each step is one focused commit, ends green (`ruff format src tests` + `ruff che
   `0.0` is a legitimate value (activation on the first sample) and a default would fabricate a spike
   at the low edge of the very distribution T1 exists to compare. A test asserts absence.
 
-### S2 — Activation-mode config surface (IAF1) ☐ (1.5–3 h)
+### S2 — Activation-mode config surface (IAF1) ✅ (2026-08-08)
 
 - **Change:** `cli/_config.py` gains `windowing.mode: sliding | activation` (default `sliding`,
   preserving current behavior) plus the activation block — detection function, detection-threshold
@@ -184,10 +184,18 @@ Each step is one focused commit, ends green (`ruff format src tests` + `ruff che
   as a `(lo, hi)` fraction pair that collapses to a point for the fixed-position baseline arm.
   Validation rejects activation-only keys under `sliding` and vice versa, mirroring how the existing
   threshold block validates. One new annotated `examples/*.yaml`.
-- **Verify:** `tests/test_cli_config.py` gains required-field / default / nullable / wrong-mode cases
-  for every new key, matching the coverage the existing blocks have; the example config loads.
-- **Depends on:** none — the config shape is fixed by the method spec, so this can land before
-  egm-signal v0.4.0 exists.
+- **Verify:** ✅ `tests/test_cli_config.py` covers every new key (defaults, parse, each invalid
+  value, both cross-mode rejections) plus example coverage; 93 tests green, ruff + mypy clean.
+- **Depends on:** none — the config shape was fixed by the method spec, so this landed without
+  needing SIG1 at runtime.
+- **Two revisions during review (Daniel):** the 64-sample trace-length rule is a **warning**, not an
+  error — it is egm-classifier's constraint, not this producer's, and would evaporate if that model
+  changed; a general-purpose IAFDB tool has no business refusing a length someone asked for. No
+  automatic pad/clip either (a pad/clip policy would be a project-level backlog item, not a silent
+  side effect of loading a config). Cross-mode key rejection kept as-is.
+- **Also folded in:** the `examples/` prune. The folder had accumulated one-off run configs (that
+  role now belongs to the gitignored `configs/`). Coverage was **measured** rather than eyeballed —
+  five keys and three enum values had no example — and is now enforced by tests.
 
 ### S3 — Activation-based extraction path (IAF1) ☐ (3–6 h)
 

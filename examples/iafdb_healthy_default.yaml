@@ -1,40 +1,44 @@
-# IAFDB healthy-segment bank — default Kosiuk AF-adjusted threshold.
+# IAFDB healthy-segment bank — the annotated reference config.
 #
-# Pulls every IAFDB record from `data/iafdb/` and emits an
-# `iafdb_bank.h5` of segments whose calibrated peak-to-peak amplitude
-# is >= 0.2 mV (Kosiuk PMID 30873619 — adjusted for AF rhythms vs the
-# 0.5 mV Sánchez/Marchlinski sinus-rhythm convention).
+# Start here. Every other example in this folder is this one with a single
+# dimension changed, so the comments below are not repeated elsewhere.
 #
-# Paths in this file are resolved relative to the YAML's directory.
-# Use this as a starting point for sinus-rhythm or percentile-based
-# variants; see iafdb_healthy_sanchez.yaml and others alongside.
+# Emits fixed-length windows whose calibrated peak-to-peak clears a threshold:
+# band-pass -> sliding peak-to-peak -> keep-above. Run with
+#   iafdb-export-bank examples/iafdb_healthy_default.yaml
 
 data:
-  data_dir: ../data/iafdb                              # PhysioNet IAFDB download root
-  output:   ../banks/iafdb_healthy_v1.h5               # bank destination (HDF5)
-  # bank_id: tbank_iafdb_healthy_2026-06-27            # optional; auto-derived (tbank_iafdb_<date>) when omitted
+  # Paths are resolved against THIS FILE's directory, not the working
+  # directory, so the config works from wherever you run it.
+  data_dir: ../data/iafdb                  # PhysioNet IAFDB download root
+  output:   ../banks/iafdb_healthy_v1.h5   # bank destination (HDF5)
 
-# Output format. 'iafdb' (default) writes only the iafdb_bank.
-# 'classifier' also writes a sibling ClassifierBank.h5 — see
-# iafdb_classifier.yaml for that flow.
+  # Optional stable cross-artifact id. Omit it and one is derived from the
+  # bank's role and today's date (tbank_iafdb_<date>, or ptbank_ when
+  # threshold.mode is none). Set it when you want a descriptive id a phase
+  # manifest can reference; the form is lowercase role_descriptor_date.
+  bank_id: tbank_iafdb_healthy_kosiuk_2026-06-27
+
 format:
-  type: iafdb
+  type: iafdb                              # iafdb | classifier
 
-# Selection strategy. 'absolute' compares calibrated peak-to-peak in mV.
-# Use 'percentile' (0..100) for scale-invariant selection, or 'none' for
-# unfiltered exports (every windowed segment).
 threshold:
-  mode:  absolute                                      # 'absolute' / 'percentile' / 'none'
-  value: 0.2                                           # mV cutoff (Kosiuk-adjusted for AF)
+  mode:  absolute                          # absolute | percentile | none
+  value: 0.2                               # mV cutoff, Kosiuk AF-adjusted
+  # Alternative convention: value: 0.5 is Sánchez 2021's sinus-rhythm cutoff
+  # (cf. Marchlinski 2000, Sanders 2003). IAFDB is AF-rhythm data, so 0.5 is
+  # the stricter choice and yields far fewer segments — useful when comparing
+  # directly against literature that uses the sinus-rhythm convention.
 
-# Sliding-window length and stride in milliseconds. 512 ms matches the
-# classifier's T=512 input at 1 kHz; 256 ms hop is 50% overlap.
 windowing:
+  mode: sliding                            # sliding (default) | activation
   window_ms: 512.0
   hop_ms:    256.0
+  band_hz: [30.0, 300.0]                   # clinical bipolar EGM band
 
-# R-wave-anchored calibration target (mV). Each per-record scalar
-# brings the median QRS peak-to-peak to this value on the chosen
-# surface ECG lead.
 calibration:
+  # The target the per-record R-wave anchoring normalizes to. This is the
+  # ONLY place in the constellation this value is defaulted — egm-signal
+  # ships none, and export_bank() requires it explicitly — so a corpus
+  # cannot be calibrated to two different scales depending on entry point.
   target_qrs_pp_mv: 1.0

@@ -1,22 +1,24 @@
-# IAFDB + unlabeled ClassifierBank pair — Kosiuk threshold, no ground truth.
+# IAFDB bank + a paired ClassifierBank with NO ground truth.
 #
-# Same selection as iafdb_classifier.yaml, but the sibling ClassifierBank.h5
-# is written with the `unlabeled` label policy: every label_truth is None and
-# the labels dict is empty. IAFDB carries no per-segment fibrosis truth, so
-# this is the honest export — and it is the bank an eval run predicts on to
-# emit an unlabeled (upred_) predictions bank for the realism /
-# output-distribution figures.
+# The honest policy for IAFDB, and the one to reach for by default.
+#
+# IAFDB carries no per-segment fibrosis labels — nobody annotated this data for
+# the thing we are trying to predict. `unlabeled` says so: every `label_truth`
+# is left None and the labels dict is empty. A bank in this shape is inference
+# input, not training data; an eval run over it produces an unlabeled (`upred_`)
+# predictions bank, and any result read off it is a directional, label-free
+# observation rather than a scored metric. No AUROC, no confusion matrix — there
+# is nothing to score against.
+#
+# Contrast iafdb_classifier.yaml, which asserts all-healthy.
 
 data:
   data_dir: ../data/iafdb
-  output:   ../banks/iafdb_inference_v1.h5             # the iafdb_bank.h5 still gets written
+  output:   ../banks/iafdb_inference_v1.h5   # the iafdb_bank.h5 is still written
 
 format:
-  type: classifier                                      # also writes ClassifierBank.h5
-  label_policy: unlabeled                               # no ground truth — every label_truth None
-  # classifier_output is optional; defaults to <output>.classifier.h5
-  # next to the iafdb bank. Set explicitly for a different location:
-  # classifier_output: ../banks/iafdb_inference_v1.classifier.h5
+  type: classifier
+  label_policy: unlabeled
 
 threshold:
   mode:  absolute

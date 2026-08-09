@@ -1,39 +1,42 @@
-# IAFDB noise bank — default percentile strategy.
+# IAFDB noise bank — the annotated reference for the noise producer.
 #
-# Keeps windows whose peak-to-peak is at or below the 20th percentile
-# of each record's pooled distribution. Scale-invariant (no
-# calibration required), which is the right choice for IAFDB because
-# the recorded signals are uncalibrated.
+# Run with: iafdb-export-noise-bank examples/iafdb_noise_percentile.yaml
 #
-# Produces a pair of files:
-#   ../banks/iafdb_noise_v1.h5              — the bank (consumed by mixer)
-#   ../banks/iafdb_noise_v1_run_record.json — provenance sidecar
+# The mirror of the healthy producer: it keeps windows *below* a threshold
+# rather than above one. The output feeds the synthetic-EGM mixer, which adds
+# real recording noise to clean simulated traces — so what is wanted here is
+# genuine inter-activation quiet, not signal.
 #
-# The mixer in synthetic-egm-pipeline opens the HDF5; auditing tools
-# and the white paper's methods section open the JSON.
+# Two asymmetries against the healthy side, both deliberate:
+#   - No calibration. The percentile default is scale-invariant, so calibrating
+#     would be wasted work and would add R-wave-detection failure modes on
+#     records that need none. The run record says calibration_method: none.
+#   - A JSON run-record sidecar is always written beside the bank, carrying the
+#     full producer config plus optional per-trace provenance. The healthy bank
+#     has no sidecar — its schema carries that provenance inline.
 
 data:
   data_dir: ../data/iafdb
   output:   ../banks/iafdb_noise_v1.h5
-  # bank_id is optional; auto-derived (nbank_iafdb_<date>) when omitted,
-  # and recorded on the run-record sidecar (not the slim HDF5).
-  # bank_id: nbank_iafdb_quiet_2026-06-27
-  # run_record_output is optional; defaults to <output>.stem + "_run_record.json"
-  # next to the bank. Override only if you want a non-adjacent JSON.
-  # run_record_output: ../banks/iafdb_noise_v1_run_record.json
 
-# Keep-below threshold (the noise side). 'percentile' is recommended
-# for uncalibrated input. Use 'absolute' only if the records are
-# pre-calibrated and you want a true mV cutoff.
+  # Where the sidecar goes. Omit it and the producer derives
+  # <output-stem>_run_record.json beside the bank; set it when the two want
+  # different names or directories.
+  run_record_output: ../banks/iafdb_noise_v1_provenance.json
+
+  # Optional stable id. Since noise_bank 1.1 it is stamped on the bank's HDF5
+  # root attr *and* recorded on the sidecar, from one resolution, so the two
+  # cannot disagree.
+  bank_id: nbank_iafdb_quiet_p20_2026-06-27
+
 threshold:
-  mode:  percentile                                     # 'percentile' or 'absolute'
-  value: 20.0                                           # 0..100; lower = quieter
+  mode:  percentile                        # percentile | absolute
+  value: 20.0                              # 0..100; lower = quieter
 
-# Sliding-window length and stride. Shorter than healthy-segment
-# extraction (200 ms vs 512 ms): noise segments feed the mixer, which
-# tiles them to fit the synthetic trace length, so smaller chunks
-# give more variety per record.
 windowing:
+  # Shorter than the healthy side's 512 ms: the mixer tiles noise to match the
+  # clean trace's length, so short source windows give more variety per record
+  # without inflating the bank's row count.
   window_ms: 200.0
   hop_ms:    100.0
 
