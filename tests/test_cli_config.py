@@ -52,7 +52,9 @@ def test_bank_export_minimum_required_fields(tmp_path: Path) -> None:
     assert cfg.output == (tmp_path / "out.h5").resolve()
     # Defaults match the previous argparse defaults.
     assert cfg.output_format == "iafdb"
-    assert cfg.label_policy == "all-healthy"
+    # Default `unlabeled`: IAFDB has no per-segment fibrosis truth, so a
+    # config that says nothing about labels must not produce a labeled bank.
+    assert cfg.label_policy == "unlabeled"
     assert cfg.classifier_output is None
     assert cfg.threshold_mode == "absolute"
     assert cfg.threshold_value == 0.2
@@ -128,6 +130,31 @@ def test_bank_export_classifier_format(tmp_path: Path) -> None:
     cfg = build_bank_export_config(load_yaml(path))
     assert cfg.output_format == "classifier"
     assert cfg.label_policy == "all-healthy"
+
+
+def test_classifier_bank_is_unlabeled_unless_labels_are_asked_for(tmp_path: Path) -> None:
+    """A classifier bank with no stated policy must claim nothing.
+
+    IAFDB has no per-segment fibrosis truth, so labels are an assertion
+    about the data rather than a property of it. The old default was
+    `all-healthy`, which meant a config saying nothing about labels quietly
+    produced a fully-labeled bank — a claim nobody made, and confusing
+    enough in practice to be worth pinning as a behaviour."""
+    path = _write_yaml(
+        tmp_path,
+        """
+        data:
+          data_dir: ./data
+          output: ./out.h5
+        format:
+          type: classifier
+        """,
+    )
+    cfg = build_bank_export_config(load_yaml(path))
+    assert cfg.output_format == "classifier"
+    assert cfg.label_policy == "unlabeled"
+    # And the policy really does decline to label.
+    assert _label_policy(cfg.label_policy)(object()) is None
 
 
 def test_bank_export_rejects_unknown_format(tmp_path: Path) -> None:

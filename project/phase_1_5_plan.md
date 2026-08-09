@@ -2,7 +2,7 @@
 
 **Repo:** iafdb-pipeline · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 6/9 steps done — Wave 1 complete for this repo (S0 B22, S1 IAF3, S5+S7 the `theory.md` graduation). Remaining: S2–S4 (IAF1) and S6 (B11b), both **Wave 2**, plus S8 phase-exit.
+**Status:** in progress · **Progress:** 7/9 steps done — Wave 1 complete for this repo (S0 B22, S1 IAF3, S5+S7 the `theory.md` graduation). Remaining: S2–S4 (IAF1) and S6 (B11b), both **Wave 2**, plus S8 phase-exit.
 **Repo estimate:** **12–23.75 h active · 11 points** across B22 · IAF1 · B20 · B11a · B11b and the
 `theory.md` trim. Cold-start estimates are by **analogy**, not arithmetic —
 `estimation_ledger.csv` is empty, so there is no time-per-point rate to multiply by yet. Ranges are
@@ -213,7 +213,7 @@ Each step is one focused commit, ends green (`ruff format src tests` + `ruff che
   windows and no exception; the tallies sum to the candidate count.
 - **Depends on:** S2, and **egm-signal v0.4.0** (SIG1).
 
-### S4 — Wire the mode into the export + provenance (IAF1) ☐ (1.5–4 h)
+### S4 — Wire the mode into the export + provenance (IAF1) ✅ (2026-08-09)
 
 - **Change:** `export/bank_export.py` dispatches on `windowing.mode` and threads the activation
   path's results into the existing Pydantic-build / write tail, so both modes emit an `iafdb_bank`

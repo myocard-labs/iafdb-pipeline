@@ -10,10 +10,15 @@ which windows are kept, how they are counted, and what is carried forward.
 from __future__ import annotations
 
 import math
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 from myocard_egm_contracts import iafdb_bank as _iafdb_bank_models
+from myocard_egm_contracts.validators import validate_iafdb_bank
+from myocard_egm_data.banks import read_iafdb_bank_hdf5
+from myocard_egm_signal import NoThreshold
 from myocard_egm_signal.extraction.activation_based import UniformPositionGenerator
 from pydantic import ValidationError
 
@@ -23,6 +28,7 @@ from myocard_iafdb_pipeline.cli._config import (
     PositionBandConfig,
 )
 from myocard_iafdb_pipeline.constants import BIPOLAR_CHANNELS
+from myocard_iafdb_pipeline.export import export_bank
 from myocard_iafdb_pipeline.export.activation_extract import (
     UNUSED_PEAK_TO_PEAK_MV,
     ActivationSegment,
@@ -31,6 +37,17 @@ from myocard_iafdb_pipeline.export.activation_extract import (
     extract_activation_segments,
 )
 from myocard_iafdb_pipeline.records import IAFDBRecord
+
+
+def _unwrap(value: Any) -> Any:
+    """Codegen wraps constrained scalars in a ``.root`` container.
+
+    Mirrors egm-data's helper of the same name; typed ``Any`` in/out for the
+    same reason it is there — the wrapper is a codegen detail, and pinning a
+    narrower type here would just move the cast to every call site.
+    """
+    return getattr(value, "root", value)
+
 
 FS = 1000.0
 WINDOW_MS = 192.0
@@ -105,25 +122,44 @@ def _record_with_activations(
     amplitude: float = 1.0,
     noise_sd: float = 0.01,
     dead_channels: tuple[str, ...] = (),
+    qrs_period: int = 800,
 ) -> IAFDBRecord:
     """A record whose bipolar channels carry activations at known samples.
 
-    Baseline noise is present and non-zero on purpose: the median/MAD
-    threshold is computed from the signal itself, so a perfectly clean
-    channel has no scale to measure against.
+    Two details that exist to satisfy the *whole* export path, not just
+    the extractor:
+
+    - Baseline noise is non-zero, because the median/MAD threshold is
+      computed from the signal itself and a perfectly clean channel gives
+      it no scale to measure against.
+    - A surface lead with QRS annotations is included, because R-wave
+      anchored calibration runs before extraction and refuses a record it
+      cannot measure. Tests that call the extractor directly never reach
+      that, which is exactly why the end-to-end tests caught it.
     """
-    channels = list(BIPOLAR_CHANNELS)
+    channels = [*BIPOLAR_CHANNELS, "II"]
     rng = np.random.default_rng(0)
     signal = rng.normal(0.0, noise_sd, (n_samples, len(channels)))
     pulse = _activation_pulse(amplitude=amplitude)
     half = len(pulse) // 2
 
     for ci, ch in enumerate(channels):
+        if ch == "II":
+            continue
         if ch in dead_channels:
             signal[:, ci] = 0.0  # perfectly constant -> DegenerateSignalError
             continue
         for t in activation_samples:
             signal[t - half : t + half + 1, ci] += pulse
+
+    # Surface QRS complexes, tall relative to the bipolar activations so the
+    # calibration scalar is well-defined.
+    qrs = np.arange(qrs_period, n_samples - qrs_period, qrs_period)
+    surface = channels.index("II")
+    qrs_pulse = _activation_pulse(width_ms=80.0, amplitude=5.0)
+    qrs_half = len(qrs_pulse) // 2
+    for qrs_at in qrs.tolist():
+        signal[qrs_at - qrs_half : qrs_at + qrs_half + 1, surface] += qrs_pulse
 
     return IAFDBRecord(
         name=name,
@@ -134,7 +170,7 @@ def _record_with_activations(
         channel_names=tuple(channels),
         units=tuple("mV" for _ in channels),
         comments=("synthetic activation record",),
-        qrs_samples=np.array([], dtype=np.int64),
+        qrs_samples=qrs.astype(np.int64),
     )
 
 
@@ -438,3 +474,156 @@ def test_sentinel_round_trips_through_the_columns_float32_storage() -> None:
     """The column is stored float32; the sentinel must survive the narrowing."""
     stored = float(np.asarray([UNUSED_PEAK_TO_PEAK_MV], dtype=np.float32)[0])
     assert stored == UNUSED_PEAK_TO_PEAK_MV
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: activation mode through export_bank to a validated bank
+# ---------------------------------------------------------------------------
+
+
+def test_activation_mode_writes_a_bank_that_validates(tmp_path: Path) -> None:
+    """The whole path: records -> detect -> window -> Pydantic -> HDF5.
+
+    The contracts validator is the gate that matters here — it is the same
+    check every consumer applies, so passing it is what makes the bank
+    usable rather than merely written."""
+    records = [
+        _record_with_activations([600, 1200, 1800, 2400, 3000], name=f"iaf{i}_afw") for i in (1, 2)
+    ]
+    out = tmp_path / "activation.h5"
+
+    result = export_bank(
+        out,
+        records=records,
+        threshold=NoThreshold(),
+        target_qrs_pp_mv=1.0,
+        activation=_config(low=0.4, high=0.6, seed=3),
+        progress=False,
+    )
+
+    assert result.written is True
+    assert result.n_segments > 0
+    assert validate_iafdb_bank(out).ok
+
+    bank = read_iafdb_bank_hdf5(out)
+    assert len(bank.traces.signal) == result.n_segments
+    # Every trace is exactly T long — the point of a fixed trace length.
+    assert all(len(sig) == WINDOW_SAMPLES for sig in bank.traces.signal)
+
+
+def test_activation_bank_records_position_and_declares_no_threshold(
+    tmp_path: Path,
+) -> None:
+    """The two provenance facts that make an activation bank readable.
+
+    `activation_position` is populated — IAF3 added the field unset, and
+    without it T1's claim that the synthetic and IAFDB position
+    distributions match cannot be checked against the artifact.
+    `threshold_mode` is 'none' because no amplitude selection happened; the
+    bank has to say that rather than inherit the sliding default."""
+    records = [_record_with_activations([600, 1200, 1800, 2400], name="iaf1_afw")]
+    out = tmp_path / "activation.h5"
+
+    export_bank(
+        out,
+        records=records,
+        threshold=NoThreshold(),
+        target_qrs_pp_mv=1.0,
+        activation=_config(low=0.4, high=0.6, seed=5),
+        progress=False,
+    )
+
+    bank = read_iafdb_bank_hdf5(out)
+    stored_positions = bank.traces.activation_position
+    assert stored_positions is not None, "activation mode must populate the column"
+    positions = [float(_unwrap(p)) for p in stored_positions]
+    assert len(positions) == len(bank.traces.signal)
+    # The band is honoured to within half a sample. The stored value is the
+    # *realized* position: `s = round(t_a - p*(T-1))` snaps the window start
+    # to an integer sample, so the achieved fraction can sit just outside the
+    # requested band. egm-signal carries requested and realized separately
+    # for exactly this reason, and the realized one is what a consumer
+    # compares against synthetic — so that is what is stored and asserted.
+    slack = 0.5 / (WINDOW_SAMPLES - 1)
+    assert all(0.4 - slack <= p <= 0.6 + slack for p in positions)
+    assert len(set(positions)) > 1  # varied, not a single fixed anchor
+
+    assert bank.threshold_mode.value == "none"
+    # HDF5 has no native null, so the writer stamps NaN for a null
+    # threshold_value and it reads back as a float — the same convention the
+    # sliding NoThreshold path already relies on.
+    threshold_value = bank.threshold_value
+    assert threshold_value is None or math.isnan(float(_unwrap(threshold_value)))
+    # No stride exists in this mode. The field is optional in the schema and
+    # would ideally be absent, but egm-data writes 0.0 for a missing value
+    # while the schema requires > 0, so an omitted hop cannot be read back.
+    # The sentinel is the workaround; see UNUSED_HOP_MS.
+    assert math.isinf(float(_unwrap(bank.hop_ms)))
+
+
+def test_activation_bank_marks_peak_to_peak_unused(tmp_path: Path) -> None:
+    """The required column carries the sentinel, not a fabricated number.
+
+    Writing a plausible amplitude here would assert an amplitude selection
+    that never happened; the sentinel is unmistakable."""
+    records = [_record_with_activations([600, 1200, 1800], name="iaf1_afw")]
+    out = tmp_path / "activation.h5"
+
+    export_bank(
+        out,
+        records=records,
+        threshold=NoThreshold(),
+        target_qrs_pp_mv=1.0,
+        activation=_config(),
+        progress=False,
+    )
+
+    bank = read_iafdb_bank_hdf5(out)
+    values = [float(_unwrap(v)) for v in bank.traces.peak_to_peak_mv]
+    assert values and all(math.isinf(v) for v in values)
+
+
+def test_sliding_mode_is_unchanged_by_the_activation_wiring(tmp_path: Path) -> None:
+    """Adding a second mode must not perturb the first.
+
+    The sliding path produces every bank generated to date, so a change in
+    its output would silently invalidate comparisons against them."""
+    record = _record_with_activations([600, 1200, 1800, 2400], name="iaf1_afw")
+    out = tmp_path / "sliding.h5"
+
+    result = export_bank(
+        out,
+        records=[record],
+        threshold=NoThreshold(),
+        target_qrs_pp_mv=1.0,
+        progress=False,
+    )
+
+    assert result.written is True
+    assert validate_iafdb_bank(out).ok
+    bank = read_iafdb_bank_hdf5(out)
+    # Sliding windows are 512 ms by default and carry no activation anchor.
+    assert all(len(sig) == 512 for sig in bank.traces.signal)
+    assert bank.traces.activation_position is None
+    assert result.channel_tallies == ()
+
+
+def test_activation_yield_is_reported_per_channel(tmp_path: Path) -> None:
+    """The tallies reach the caller, so the CLI can print the drop reasons.
+
+    Without them a run that produces few traces gives the operator no way
+    to tell whether detection found little or windowing rejected a lot."""
+    records = [_record_with_activations([600, 1200, 1800], name="iaf1_afw")]
+
+    result = export_bank(
+        tmp_path / "activation.h5",
+        records=records,
+        threshold=NoThreshold(),
+        target_qrs_pp_mv=1.0,
+        activation=_config(),
+        progress=False,
+    )
+
+    assert len(result.channel_tallies) == len(BIPOLAR_CHANNELS)
+    assert sum(t.kept for t in result.channel_tallies) == result.n_segments
+    assert all(t.candidates == t.detected for t in result.channel_tallies)

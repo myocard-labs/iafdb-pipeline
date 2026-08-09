@@ -24,7 +24,8 @@ Examples
     # Unfiltered pretraining bank.
     iafdb-export-bank examples/iafdb_pretrain.yaml
 
-    # IAFDB + ClassifierBank pair (all-healthy labels).
+    # IAFDB + ClassifierBank pair (all-healthy labels — see the warning
+    # in that file; unlabeled is the default and the honest choice).
     iafdb-export-bank examples/iafdb_classifier.yaml
 
     # IAFDB + unlabeled ClassifierBank (no ground truth) for inference.
@@ -52,6 +53,7 @@ from myocard_iafdb_pipeline.cli._config import (
     build_bank_export_config,
     load_yaml,
 )
+from myocard_iafdb_pipeline.export.activation_extract import ChannelTally
 from myocard_iafdb_pipeline.export.bank_export import BankExportResult, export_bank
 from myocard_iafdb_pipeline.records import iter_records
 
@@ -72,11 +74,16 @@ def _label_policy(name: str) -> Any:
 
     Policies:
 
-    - ``"all-healthy"`` — every trace labeled 0 ("healthy"). Encodes the
-      fiction that all IAFDB segments are non-fibrotic; only loosely
-      defensible for a sinus-rhythm-thresholded bank, and a documented
-      limitation either way (IAFDB carries no per-segment fibrosis truth).
-    - ``"unlabeled"`` — no ground truth: the label_fn returns ``None``, which
+    - ``"all-healthy"`` — every trace labeled 0 ("healthy"). **Unproven and
+      likely wrong for IAFDB, and opt-in for that reason.** It asserts that
+      every selected trace is non-fibrotic, which is a restatement of the
+      amplitude threshold rather than evidence: IAFDB carries no
+      per-segment fibrosis truth, every patient is arrhythmic, and there is
+      no independent labeling to check against. The approach came from a
+      paper using a simple amplitude rule to separate healthy from
+      unhealthy tissue; it does not transfer to the classification this
+      project is doing.
+    - ``"unlabeled"`` — **the default.** No ground truth: the label_fn returns ``None``, which
       egm-data's converter maps to every ``label_truth = None`` plus an empty
       labels dict. The honest policy for IAFDB; use it to build the inference
       bank an eval run turns into an unlabeled (``upred_``) predictions bank.
@@ -124,6 +131,46 @@ def _format_result(result: BankExportResult, *, threshold_descr: str) -> str:
     return "\n".join(lines)
 
 
+def _format_yield(tallies: tuple[ChannelTally, ...]) -> str:
+    """Summarize activation-mode yield: what was detected, kept and dropped.
+
+    Printed because the drop reasons are the operator's tuning signal. A
+    bare segment count cannot distinguish "the detector found little" from
+    "it found plenty and nearly all of it was multi-activation" — and on
+    this dataset, where every patient is arrhythmic, the second is the
+    likely failure. The two drop columns have different remedies, which is
+    why they are reported apart rather than summed.
+    """
+    detected = sum(t.detected for t in tallies)
+    kept = sum(t.kept for t in tallies)
+    boundary = sum(t.dropped_boundary for t in tallies)
+    multi = sum(t.dropped_multi_activation for t in tallies)
+    kept_multi = sum(t.kept_multi_activation for t in tallies)
+    degenerate = [t for t in tallies if t.degenerate]
+
+    pct = f"{100.0 * kept / detected:.1f}%" if detected else "n/a"
+    lines = [
+        "  Activation yield:",
+        f"    Detected:           {detected}",
+        f"    Kept:               {kept} ({pct} of detected)",
+        f"    Dropped, boundary:  {boundary}",
+        f"    Dropped, multi:     {multi}",
+    ]
+    if kept_multi:
+        lines.append(f"    (kept multi-activation: {kept_multi})")
+    if degenerate:
+        names = ", ".join(f"{t.record_name}/{t.channel}" for t in degenerate)
+        lines.append(f"    Degenerate channels: {len(degenerate)} ({names})")
+    if detected and kept == 0:
+        lines.append(
+            "    NOTE: activations were detected but every window was dropped. "
+            "If most were multi-activation, the detection settings are not "
+            "separating activations — set activation.keep_multi_activation: true "
+            "to inspect them."
+        )
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="iafdb-export-bank",
@@ -162,6 +209,7 @@ def main(argv: list[str] | None = None) -> int:
             output_path=cfg.output,
             records=records,
             threshold=threshold,
+            activation=cfg.activation,
             window_ms=cfg.window_ms,
             hop_ms=cfg.hop_ms,
             target_qrs_pp_mv=cfg.target_qrs_pp_mv,
@@ -185,12 +233,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
+    if not result.written:
+        # export_bank already warned with the reason; say plainly that no
+        # file exists rather than printing a summary of a bank that isn't
+        # there.
+        print(f"No bank written to {result.output_path} — nothing survived.", file=sys.stderr)
+        return 1
+
     threshold_descr = (
-        "none (unfiltered)"
+        "activation-anchored (no amplitude selection)"
+        if cfg.activation is not None
+        else "none (unfiltered)"
         if cfg.threshold_mode == "none"
         else f"{cfg.threshold_mode} {cfg.threshold_value}"
     )
     print(_format_result(result, threshold_descr=threshold_descr))
+    if result.channel_tallies:
+        print(_format_yield(result.channel_tallies))
     return 0
 
 

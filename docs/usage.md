@@ -74,13 +74,15 @@ The headline producer. Builds an `iafdb_bank.h5` of high-voltage (or unfiltered)
 iafdb-export-bank CONFIG.yaml [--overwrite] [--no-progress]
 ```
 
-The shipped examples cover the four common scenarios:
+The shipped examples cover one scenario each — start with the first, which is the annotated reference:
 
-- `examples/iafdb_healthy_default.yaml` — Kosiuk-adjusted 0.2 mV absolute threshold (the project default).
-- `examples/iafdb_healthy_sanchez.yaml` — Sánchez sinus-rhythm 0.5 mV threshold (the literature anchor).
-- `examples/iafdb_pretrain.yaml` — `threshold.mode: none` for unsupervised pretraining banks (every windowed segment kept).
-- `examples/iafdb_classifier.yaml` — Same selection as the default, but additionally emits a paired ClassifierBank.h5 with every trace labeled 0 (healthy).
-- `examples/iafdb_healthy_with_bank_id.yaml` — Same as the default, but sets an explicit `data.bank_id` instead of auto-deriving it (see [Stable bank IDs](#stable-bank-ids)).
+- `examples/iafdb_healthy_default.yaml` — Kosiuk-adjusted 0.2 mV absolute threshold, sliding windows. The reference config; also shows `data.bank_id` and the Sánchez 0.5 mV alternative.
+- `examples/iafdb_healthy_percentile.yaml` — per-record percentile selection, the scale-invariant alternative to an absolute mV cut.
+- `examples/iafdb_pretrain.yaml` — `threshold.mode: none`; every windowed segment kept.
+- `examples/iafdb_classifier_unlabeled.yaml` — emits a paired ClassifierBank with **no ground truth**. The honest shape for IAFDB and the default label policy.
+- `examples/iafdb_classifier.yaml` — the same, but labeled `all-healthy`. **Opt-in and unproven** — read the warning at the top of that file before using it.
+- `examples/iafdb_activation_windows.yaml` — activation-anchored windowing (`windowing.mode: activation`): one window per detected activation rather than a fixed stride.
+- `examples/iafdb_activation_botteron.yaml` — the same mode with the noise-robust detection chain (Botteron envelope, percentile threshold, two-stage refiner).
 
 Run one with:
 
@@ -100,9 +102,8 @@ iafdb-export-noise-bank CONFIG.yaml [--overwrite] [--no-progress]
 
 Shipped examples:
 
-- `examples/iafdb_noise_percentile.yaml` — 20th-percentile (scale-invariant) keep-below. **Recommended default** for uncalibrated IAFDB input.
+- `examples/iafdb_noise_percentile.yaml` — 20th-percentile (scale-invariant) keep-below. **Recommended default** for uncalibrated IAFDB input; also shows `data.bank_id` and `data.run_record_output`.
 - `examples/iafdb_noise_absolute.yaml` — 0.05 mV absolute (Sanders 2003 "electrically silent" tier). Requires calibrated input — not the IAFDB defaults.
-- `examples/iafdb_noise_with_bank_id.yaml` — Percentile noise bank with an explicit `data.bank_id` override (recorded on the sidecar).
 
 ## Config schema
 
@@ -124,7 +125,7 @@ data:
 format:
   type: iafdb                                  # 'iafdb' (default) or 'classifier'
   # The two below only matter when type=classifier:
-  label_policy: all-healthy                    # required for 'classifier' — 'all-healthy' or 'unlabeled'
+  label_policy: unlabeled                      # default; 'all-healthy' opts in to labels (see warning)
   # classifier_output: ../banks/iafdb_healthy_v1.classifier.h5  # default: <output>.classifier.h5
 
 threshold:
@@ -148,7 +149,7 @@ Per-field reference:
 | `data.output` | path | (required) | Output `.h5` path for the iafdb_bank. |
 | `data.bank_id` | str (ArtifactId) | auto: `tbank_`/`ptbank_` + `_iafdb_<date>` | Optional explicit stable id. Derived from the threshold role when omitted (`none` → `ptbank_`, else `tbank_`). See [Stable bank IDs](#stable-bank-ids). |
 | `format.type` | `iafdb` / `classifier` | `iafdb` | When `classifier`, also writes a labeled ClassifierBank.h5 sibling. |
-| `format.label_policy` | `all-healthy` / `unlabeled` | `all-healthy` | Label policy for the ClassifierBank conversion. `all-healthy` labels every trace 0 (`{0: "healthy"}`); `unlabeled` leaves every `label_truth` as `None` with an empty labels dict — the honest policy for IAFDB (no per-segment fibrosis truth), and the one to use when the bank feeds an eval run that emits an unlabeled (`upred_`) predictions bank. |
+| `format.label_policy` | `all-healthy` / `unlabeled` | **`unlabeled`** | Label policy for the ClassifierBank conversion. `unlabeled` (the default) leaves every `label_truth` as `None` with an empty labels dict — the honest policy for IAFDB, which has no per-segment fibrosis truth, and what an eval run turns into an unlabeled (`upred_`) predictions bank. `all-healthy` labels every trace 0 (`{0: "healthy"}`); it is **opt-in and unproven** — the assertion restates the amplitude threshold rather than evidencing it, so prefer `unlabeled` unless you specifically need the labeled shape. |
 | `format.classifier_output` | path | `<output>.classifier.h5` | Override the classifier output location. |
 | `threshold.mode` | `absolute` / `percentile` / `none` | `absolute` | Healthy-side selection strategy. |
 | `threshold.value` | float | `0.2` | mV cutoff for `absolute`, 0-100 percentile for `percentile`, ignored for `none`. |

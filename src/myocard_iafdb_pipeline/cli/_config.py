@@ -462,7 +462,18 @@ def build_bank_export_config(doc: dict[str, Any]) -> BankExportConfig:
     if output_format_raw not in ("iafdb", "classifier"):
         raise ConfigError(f"format.type must be 'iafdb' or 'classifier'; got {output_format_raw!r}")
 
-    label_policy = str(_optional(doc, "format", "label_policy", default="all-healthy"))
+    # Default `unlabeled`, deliberately. IAFDB carries no per-segment
+    # fibrosis truth, so a bank that omits this key should not quietly
+    # acquire labels — and for a while it did: the old `all-healthy`
+    # default meant a config that said nothing about labels produced a
+    # fully-labeled bank, which is a claim about the data nobody made.
+    #
+    # The labeling idea came from a paper using a simple amplitude rule to
+    # separate healthy from unhealthy tissue. On closer reading of IAFDB
+    # that approach does not transfer to the classification this project is
+    # doing, so `all-healthy` is now opt-in and carries a health warning
+    # where it is demonstrated.
+    label_policy = str(_optional(doc, "format", "label_policy", default="unlabeled"))
     classifier_output = _resolve_path(
         _optional(doc, "format", "classifier_output", default=None), cfg_dir
     )
@@ -501,7 +512,23 @@ def build_bank_export_config(doc: dict[str, Any]) -> BankExportConfig:
                     f"anchored on detected activations, not stepped at a fixed stride. "
                     f"Trace length is activation.trace_duration_ms."
                 )
+        # Amplitude selection is a sliding-mode concept. Activation mode picks
+        # windows by *where an activation is*, and computes no peak-to-peak
+        # statistic to threshold against — so a threshold block here would
+        # either be ignored (a config that lies) or would need a second,
+        # independent selection mechanism layered on top of the first.
+        if _present(doc, "threshold") and threshold_mode_raw != "none":
+            raise ConfigError(
+                "threshold.mode has no meaning under windowing.mode='activation' — windows "
+                "are selected by where an activation is, not by amplitude, and no "
+                "peak-to-peak statistic is computed to threshold against. Remove the "
+                "threshold block (the bank records threshold_mode='none')."
+            )
         activation = _build_activation_config(doc, fs_hz=SAMPLING_RATE_HZ)
+        # No amplitude selection happened, and the bank must say so rather
+        # than inherit the sliding default of 'absolute 0.2'.
+        threshold_mode_raw = "none"
+        threshold_value = None
     elif _present(doc, "activation"):
         raise ConfigError(
             "an 'activation:' block is set but windowing.mode is 'sliding' — "

@@ -57,8 +57,17 @@ from myocard_egm_signal import (
     extract_healthy_segments,
 )
 
+from myocard_iafdb_pipeline.cli._config import ActivationConfig
 from myocard_iafdb_pipeline.constants import BIPOLAR_CHANNELS, SAMPLING_RATE_HZ
 from myocard_iafdb_pipeline.exceptions import EmptyBankWarning
+from myocard_iafdb_pipeline.export.activation_extract import (
+    UNUSED_HOP_MS,
+    UNUSED_PEAK_TO_PEAK_MV,
+    ActivationSegment,
+    ChannelTally,
+    build_position_generator,
+    extract_activation_segments,
+)
 from myocard_iafdb_pipeline.ids import derive_iafdb_bank_id, validate_artifact_id
 from myocard_iafdb_pipeline.records import IAFDBRecord
 
@@ -96,6 +105,9 @@ class BankExportResult:
     per_patient_counts: dict[str, int]
     per_channel_counts: dict[str, int]
     written: bool = True
+    # Populated in activation mode only: per record+channel yield accounting.
+    # Empty for the sliding path, which has no drop reasons to report.
+    channel_tallies: tuple[ChannelTally, ...] = ()
 
 
 def _threshold_provenance(threshold: ThresholdStrategy) -> tuple[str, float | None]:
@@ -119,6 +131,7 @@ def export_bank(
     records: Iterable[IAFDBRecord],
     threshold: ThresholdStrategy,
     target_qrs_pp_mv: float,
+    activation: ActivationConfig | None = None,
     window_ms: float = DEFAULT_WINDOW_MS,
     hop_ms: float = DEFAULT_HOP_MS,
     band_hz: tuple[float, float] = DEFAULT_BIPOLAR_BAND_HZ,
@@ -232,8 +245,16 @@ def export_bank(
 
     all_segments: list[HealthySegment] = []
     all_scalars: list[float] = []
+    activation_segments: list[ActivationSegment] = []
+    tallies: list[ChannelTally] = []
     contributing_records: list[str] = []
     n_records_processed = 0
+
+    # One position generator for the whole corpus, not one per record — a
+    # fresh seeded stream per record would make every record draw the same
+    # positions, turning the corpus position distribution into an artifact
+    # of the record count rather than of the configured band.
+    position_generator = build_position_generator(activation) if activation is not None else None
 
     for record in iterator:
         n_records_processed += 1
@@ -245,6 +266,22 @@ def export_bank(
             )
 
         cal = compute_calibration(record, target_qrs_pp_mv=target_qrs_pp_mv)
+
+        if activation is not None:
+            assert position_generator is not None
+            record_activation_segments, record_tallies = extract_activation_segments(
+                record,
+                activation,
+                calibration_scalar=cal.scalar,
+                band_hz=band_hz,
+                position_generator=position_generator,
+            )
+            tallies.extend(record_tallies)
+            if record_activation_segments:
+                contributing_records.append(record.name)
+                activation_segments.extend(record_activation_segments)
+            continue
+
         record_segments = extract_healthy_segments(
             record,
             threshold=threshold,
@@ -270,7 +307,8 @@ def export_bank(
     # on disk reads as a successful run, so the emptiness is discovered
     # much later by whoever tries to use it. Better to leave no file and
     # say why, while the settings that produced it are still in hand.
-    if not all_segments:
+    emitted = activation_segments if activation is not None else all_segments
+    if not emitted:
         warnings.warn(
             f"No segments survived from {n_records_processed} record(s) — "
             f"no bank written to {output_path}. The threshold may be above "
@@ -289,22 +327,33 @@ def export_bank(
             per_patient_counts={},
             per_channel_counts={},
             written=False,
+            channel_tallies=tuple(tallies),
         )
 
     # Build the Pydantic model — the hand-off to egm-data.
-    pyd_bank = _build_iafdb_bank_model(
-        segments=all_segments,
-        scalars=all_scalars,
-        source_records=tuple(contributing_records),
-        bank_id=resolved_bank_id,
-        threshold_mode=threshold_mode,
-        threshold_value=threshold_value,
-        target_qrs_pp_mv=target_qrs_pp_mv,
-        window_ms=window_ms,
-        window_samples=window_samples,
-        hop_ms=hop_ms,
-        band_hz=band_hz,
-    )
+    if activation is not None:
+        pyd_bank = _build_activation_bank_model(
+            segments=activation_segments,
+            source_records=tuple(contributing_records),
+            bank_id=resolved_bank_id,
+            target_qrs_pp_mv=target_qrs_pp_mv,
+            trace_duration_ms=activation.trace_duration_ms,
+            band_hz=band_hz,
+        )
+    else:
+        pyd_bank = _build_iafdb_bank_model(
+            segments=all_segments,
+            scalars=all_scalars,
+            source_records=tuple(contributing_records),
+            bank_id=resolved_bank_id,
+            threshold_mode=threshold_mode,
+            threshold_value=threshold_value,
+            target_qrs_pp_mv=target_qrs_pp_mv,
+            window_ms=window_ms,
+            window_samples=window_samples,
+            hop_ms=hop_ms,
+            band_hz=band_hz,
+        )
     write_iafdb_bank(pyd_bank, output_path, overwrite=overwrite)
 
     # Optional classifier-format output via egm-data converter.
@@ -327,19 +376,25 @@ def export_bank(
 
     per_patient: dict[str, int] = {}
     per_channel: dict[str, int] = {}
-    for seg in all_segments:
-        per_patient[seg.patient] = per_patient.get(seg.patient, 0) + 1
-        per_channel[seg.channel] = per_channel.get(seg.channel, 0) + 1
+    if activation is not None:
+        for act_seg in activation_segments:
+            per_patient[act_seg.patient_id] = per_patient.get(act_seg.patient_id, 0) + 1
+            per_channel[act_seg.source_channel] = per_channel.get(act_seg.source_channel, 0) + 1
+    else:
+        for seg in all_segments:
+            per_patient[seg.patient] = per_patient.get(seg.patient, 0) + 1
+            per_channel[seg.channel] = per_channel.get(seg.channel, 0) + 1
 
     return BankExportResult(
         output_path=output_path,
         bank_id=resolved_bank_id,
         classifier_path=cb_path,
-        n_segments=len(all_segments),
+        n_segments=len(emitted),
         source_records=tuple(contributing_records),
         n_records_processed=n_records_processed,
         per_patient_counts=dict(sorted(per_patient.items())),
         per_channel_counts=dict(sorted(per_channel.items())),
+        channel_tallies=tuple(tallies),
     )
 
 
@@ -416,4 +471,71 @@ def _build_iafdb_bank_model(
     }
     # No empty-bank branch: export_bank returns before reaching here when
     # nothing survived, so `segments` is always non-empty by this point.
+    return _iafdb_bank_models.IafdbBank.model_validate(doc)
+
+
+def _build_activation_bank_model(
+    *,
+    segments: list[ActivationSegment],
+    source_records: tuple[str, ...],
+    bank_id: str,
+    target_qrs_pp_mv: float,
+    trace_duration_ms: float,
+    band_hz: tuple[float, float],
+) -> _iafdb_bank_models.IafdbBank:
+    """Assemble activation-mode segments into a Pydantic IafdbBank.
+
+    Separate from the sliding builder rather than a branch inside it,
+    because the two modes disagree about what several root attrs *mean* —
+    and a shared builder would have to take most of them as parameters
+    anyway, at which point it is two functions wearing one name.
+
+    What differs, and why:
+
+    - ``threshold_mode="none"`` / ``threshold_value=None``. No amplitude
+      selection happened. The config layer rejects a threshold block in
+      this mode, so this is recording what the run did, not a fallback.
+    - ``hop_ms`` carries the ``UNUSED_HOP_MS`` sentinel. Windows are
+      anchored, not stepped, so there is no hop — the field is optional in
+      the schema and *should* simply be omitted, but egm-data cannot
+      round-trip an absent one. See that constant.
+    - ``peak_to_peak_mv`` is the ``UNUSED_PEAK_TO_PEAK_MV`` sentinel. The
+      column is required but describes the *selection statistic*, and this
+      mode selects on position. See that constant for why it is +inf.
+    - ``activation_position`` is populated — the field IAF3 added unset,
+      and the reason T1's position-matching claim is checkable at all.
+
+    ``window_ms`` / ``window_samples`` carry the trace length, which is
+    honest in both modes: it is how long a window is.
+    """
+    window_samples = round(trace_duration_ms * 1e-3 * SAMPLING_RATE_HZ)
+    signal_list = [seg.signal.astype(np.float32, copy=False).tolist() for seg in segments]
+
+    doc: dict[str, Any] = {
+        "schema_version": current_version("iafdb_bank"),
+        "created_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "bank_id": bank_id,
+        "source": BANK_SOURCE,
+        "fs_hz": float(SAMPLING_RATE_HZ),
+        "trace_duration_ms": float(trace_duration_ms),
+        "calibration_method": "r_wave_anchoring",
+        "calibration_target_qrs_pp_mv": float(target_qrs_pp_mv),
+        "threshold_mode": "none",
+        "threshold_value": None,
+        "band_hz": [float(band_hz[0]), float(band_hz[1])],
+        "window_ms": float(trace_duration_ms),
+        "window_samples": int(window_samples),
+        "hop_ms": UNUSED_HOP_MS,
+        "source_records": list(source_records),
+        "traces": {
+            "signal": signal_list,
+            "patient_id": [s.patient_id for s in segments],
+            "source_record": [s.source_record for s in segments],
+            "source_channel": [s.source_channel for s in segments],
+            "start_sample": [int(s.start_sample) for s in segments],
+            "peak_to_peak_mv": [UNUSED_PEAK_TO_PEAK_MV] * len(segments),
+            "calibration_scalar": [float(s.calibration_scalar) for s in segments],
+            "activation_position": [float(s.activation_position) for s in segments],
+        },
+    }
     return _iafdb_bank_models.IafdbBank.model_validate(doc)

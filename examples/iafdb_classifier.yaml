@@ -1,13 +1,23 @@
 # IAFDB bank + a paired ClassifierBank, labeled all-healthy.
 #
-# format.type: classifier writes the iafdb_bank.h5 as usual AND converts it to
-# a ClassifierBank.h5, applying a label policy on the way.
+# ============================================================================
+# WARNING — THIS LABELING IS UNPROVEN AND LIKELY WRONG FOR IAFDB.
 #
-# `all-healthy` labels every trace 0. Use it only when the selection itself is
-# the claim — a high-voltage-thresholded bank being treated as the healthy
-# class. It is NOT the honest policy for IAFDB in general: the dataset carries
-# no per-segment fibrosis truth, so asserting "healthy" is a modelling choice,
-# not a fact. See iafdb_classifier_unlabeled.yaml for the alternative.
+# `all-healthy` asserts that every trace in the bank is non-fibrotic. IAFDB
+# carries **no per-segment fibrosis ground truth**, so that assertion comes
+# from the selection rule, not from the data.
+#
+# The idea came from a paper that separated healthy from unhealthy tissue with
+# a simple amplitude rule. On closer reading of IAFDB it does not transfer to
+# the classification this project is doing: every patient is in AF or another
+# arrhythmia, amplitude alone does not identify fibrosis, and no independent
+# labeling exists to check the result against. Treat any model trained on
+# these labels as trained on an assumption.
+#
+# **Prefer `unlabeled`** — see iafdb_classifier_unlabeled.yaml. That is the
+# default, and it is the honest shape for this dataset. This example exists to
+# document the option, not to recommend it.
+# ============================================================================
 
 data:
   data_dir: ../data/iafdb
@@ -15,7 +25,10 @@ data:
 
 format:
   type: classifier
-  label_policy: all-healthy                # all-healthy | unlabeled
+  # all-healthy | unlabeled. Must be set explicitly to get labels: the
+  # default is `unlabeled`, so a config that says nothing about labels
+  # produces a bank that claims nothing about them.
+  label_policy: all-healthy
 
   # Where the ClassifierBank sibling goes. Omit it and the producer derives
   # <output>.classifier.h5; set it when the two artifacts want different names
@@ -23,6 +36,9 @@ format:
   classifier_output: ../banks/iafdb_healthy_v1_train.classifier.h5
 
 threshold:
+  # The selection this label leans on. A high-voltage cut is the *only*
+  # argument for calling these traces healthy, which is exactly why the
+  # claim is weak: it is a restatement of the threshold, not evidence.
   mode:  absolute
   value: 0.2
 

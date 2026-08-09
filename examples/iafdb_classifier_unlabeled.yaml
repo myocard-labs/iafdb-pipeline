@@ -1,6 +1,7 @@
 # IAFDB bank + a paired ClassifierBank with NO ground truth.
 #
-# The honest policy for IAFDB, and the one to reach for by default.
+# The honest policy for IAFDB, and now the DEFAULT — a config that says
+# nothing about labels produces a bank like this one.
 #
 # IAFDB carries no per-segment fibrosis labels — nobody annotated this data for
 # the thing we are trying to predict. `unlabeled` says so: every `label_truth`
@@ -10,7 +11,8 @@
 # observation rather than a scored metric. No AUROC, no confusion matrix — there
 # is nothing to score against.
 #
-# Contrast iafdb_classifier.yaml, which asserts all-healthy.
+# Contrast iafdb_classifier.yaml, which asserts all-healthy and carries a
+# warning about why that assertion is unproven for this dataset.
 
 data:
   data_dir: ../data/iafdb
@@ -18,7 +20,7 @@ data:
 
 format:
   type: classifier
-  label_policy: unlabeled
+  label_policy: unlabeled                    # the default; spelled out here for clarity
 
 threshold:
   mode:  absolute

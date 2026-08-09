@@ -43,6 +43,17 @@ All notable changes to `iafdb-pipeline` are documented here. The format follows
 
 ### Changed
 
+- **BREAKING (behavioural) — `format.label_policy` now defaults to `unlabeled`**, not
+  `all-healthy`. A `format.type: classifier` config that says nothing about labels used to
+  produce a fully-labeled bank: an assertion about the data that nobody made, and one that
+  is not supportable for IAFDB. The labeling idea came from a paper using a simple
+  amplitude rule to separate healthy from unhealthy tissue; on closer reading it does not
+  transfer to the classification this project does — IAFDB has no per-segment fibrosis
+  truth, every patient is arrhythmic, and there is nothing to check a label against.
+  `all-healthy` is still available but is now **opt-in**, and the example that demonstrates
+  it leads with a warning that the labeling is unproven and likely wrong for this dataset.
+  *Migration:* configs that relied on the old default and genuinely want labels must now set
+  `label_policy: all-healthy` explicitly.
 - **`examples/` pruned to one worked example per option.** The folder had grown as a
   scratch space for one-off runs (that role now belongs to the gitignored `configs/`),
   leaving near-duplicates that differed only in a threshold value. Measured the actual

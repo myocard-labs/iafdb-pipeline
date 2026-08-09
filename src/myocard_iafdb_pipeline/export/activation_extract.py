@@ -88,6 +88,30 @@ Verified against both validators rather than reasoned about; see
 """
 
 
+UNUSED_HOP_MS: float = float("inf")
+"""What to write into ``iafdb_bank``'s ``hop_ms`` for a mode with no stride.
+
+``hop_ms`` is *optional* in the schema, so the honest thing would be to omit
+it — activation windows are anchored on detected activations, not stepped,
+and consecutive windows may overlap heavily or not at all, so no single
+stride describes them.
+
+Omitting it does not survive the round trip. egm-data's writer stores
+``0.0`` for a missing value (``writers.py``: ``bank.hop_ms if ... else
+0.0``) while the schema declares ``exclusiveMinimum: 0`` and the reader
+treats the attr as **required** — so a bank written without a hop fails to
+read back. That is an egm-data defect, not a schema one; ``bank_id`` and
+``run_record_path``, the other two optional root attrs, are written only
+when present and read as optional.
+
+Until that is fixed, ``+inf`` is the least-misleading value available: it
+clears ``> 0``, and no real stride is infinite, so it cannot be mistaken
+for a measured parameter the way ``trace_duration_ms`` (implying
+non-overlapping windows) or a small number (implying dense overlap) could.
+Same reasoning, and the same sentinel, as :data:`UNUSED_PEAK_TO_PEAK_MV`.
+"""
+
+
 @dataclass(frozen=True)
 class ActivationSegment:
     """One kept window, named after the artifact it becomes.
@@ -341,6 +365,7 @@ def build_position_generator(config: ActivationConfig) -> UniformPositionGenerat
 
 
 __all__ = [
+    "UNUSED_HOP_MS",
     "UNUSED_PEAK_TO_PEAK_MV",
     "ActivationSegment",
     "ChannelTally",

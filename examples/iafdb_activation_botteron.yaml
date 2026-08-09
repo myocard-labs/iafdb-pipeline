@@ -20,10 +20,10 @@ data:
 
 format:
   type: iafdb
+  label_policy: unlabeled
 
-threshold:
-  mode:  absolute
-  value: 0.2
+# No threshold block — see iafdb_activation_windows.yaml. Amplitude
+# selection is a sliding-mode concept and is rejected under this mode.
 
 windowing:
   mode: activation

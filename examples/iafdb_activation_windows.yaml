@@ -26,12 +26,12 @@ data:
 
 format:
   type: iafdb
+  label_policy: unlabeled
 
-threshold:
-  # Amplitude selection still applies — it decides which *channels/windows*
-  # carry usable signal, independently of where the activations are.
-  mode:  absolute
-  value: 0.2                            # Kosiuk AF-adjusted
+# No threshold block. Amplitude selection is a sliding-mode concept: this
+# mode picks windows by where an activation is, and computes no peak-to-peak
+# statistic to threshold against. A threshold block here is rejected rather
+# than ignored, and the bank records threshold_mode: none.
 
 windowing:
   mode: activation                      # sliding (default) | activation
