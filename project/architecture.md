@@ -610,6 +610,44 @@ above:
   rides on the `noise_bank_run_record.json` sidecar instead
   (egm-contracts `noise_bank_run_record` 1.1).
 
+### The paired ClassifierBank carries two ids, and they answer different questions
+
+This surface has now been misread twice — once by egm-studio (CL-145) and
+once in review — so it is worth writing down. A ClassifierBank derived
+from an `iafdb_bank` carries **two** ids that can legitimately differ:
+
+| Field | Question it answers | Derived from |
+|---|---|---|
+| root `id` | *What is this bank, and what may a consumer do with it?* | this bank's own content — labels present → `tbank_`, absent → `ptbank_` |
+| `banks[0].bank_id` | *Where did these traces come from?* | the **source** `iafdb_bank`'s id, verbatim |
+
+So a `threshold.mode: none` export with `label_policy: all-healthy`
+produces a **`tbank_`** ClassifierBank whose `banks[0].bank_id` reads
+**`ptbank_`** — and that is correct. The source bank really is a
+`ptbank_` (nothing was thresholded); the derived bank really is a
+`tbank_` (every trace is labeled).
+
+**Why `banks[]` must not be "corrected" to match the root id.** egm-data
+specifies it as provenance — *"the stable cross-artifact id of this
+source bank; traces reference their source by this id"*, alongside
+`bank_path`. Rewriting the prefix would name an artifact that does not
+exist, strand every trace's `bank_id` on a file nobody can find, and
+break `ClassifierBank.concat`, which dedups source banks by exactly this
+value.
+
+**Why it reads as a bug anyway.** When CL-145 was filed the ClassifierBank
+had **no root `id` at all**, so `banks[]` was the only id in the file and
+consumers reasonably read its prefix as describing the bank. The apparent
+contradiction was a symptom of the missing field, not a second defect.
+With the root id stamped, each field is back to its specified job.
+
+That two independent readers made the same inference is evidence about
+the vocabulary rather than about the readers: a role prefix that is
+expected to describe content, appearing on a field that describes
+provenance, will keep being misread. Logged against **FB-19**, whose
+thesis is precisely that the role prefixes are carrying more meaning than
+they can support.
+
 **Known limitation — same-day uniqueness.** The auto-derived default is
 `{role}_iafdb_<date>` with no within-day disambiguator, so two banks of
 the same role exported on the same date derive the same ID. The override

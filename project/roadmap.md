@@ -118,6 +118,20 @@ below shift up a version):
 
 ## Known issues
 
+- **The ClassifierBank's two ids are easy to misread as contradicting each other.** The root `id`
+  describes the bank (labels → `tbank_`, none → `ptbank_`); `banks[0].bank_id` names the *source*
+  iafdb bank verbatim. They can legitimately differ, and "fixing" the provenance entry to match
+  would name a nonexistent artifact and break trace→source resolution and `concat` dedup. Misread
+  twice already (CL-145, and again in review 2026-08-11), which is evidence about the vocabulary
+  rather than the readers — folded into **FB-19**. Explained in
+  [`architecture.md`](architecture.md) → "The paired ClassifierBank carries two ids".
+- **`ptbank_` is the wrong name for what the paired ClassifierBank is.** These banks are pulled into
+  egm-studio for feature comparison against a synthetic bank, or handed to egm-classifier as
+  unlabeled inference input. Neither is "pretraining". `ptbank_` is what the id-content rule yields
+  (no labels, no predictions) and is the least wrong of the existing vocabulary, so it is what the
+  producer stamps — but the vocabulary is the thing that needs fixing, not this producer's use of
+  it. Tracked at **FB-19** (the role-vocabulary study), which already carries three other artifacts
+  that fall back to an over-claiming prefix.
 - **`refractory_ms` has no feedback column.** The `--report` yield funnel starts at the
   detector's *output*: `detect_activation_train` returns only its final index array, so the
   candidate count before refractory suppression is not recoverable through the current

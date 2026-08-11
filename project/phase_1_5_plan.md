@@ -2,7 +2,8 @@
 
 **Repo:** iafdb-pipeline · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** COMPLETE · **Progress:** 12/12 steps done — Wave 1 complete (S0 B22, S1 IAF3, S5+S7 the `theory.md` graduation) and Wave 2 complete (S2–S4 IAF1, S6 B11b). All steps shipped. Three were unplanned (S9, S10, S11), all arising from Daniel's review of S6.
+**Status:** COMPLETE · **Progress:** 13/13 steps done — Wave 1 complete (S0 B22, S1 IAF3, S5+S7 the `theory.md` graduation) and Wave 2 complete (S2–S4 IAF1, S6 B11b). All steps shipped. Four were unplanned — S9/S10/S11 from Daniel's review of S6, and S12 from the
+wave-completion check (a `[RESOLVED]` CL that still carried unimplemented work).
 **"Complete" here means implementation, not released.** The PR into `release` is deliberately held
 until Phase 1.5 implementation lands across every repo: iafdb-pipeline is imported by nothing, and
 the phase has already turned up several cross-repo changes mid-implementation (CL-149, CL-151,
@@ -373,6 +374,28 @@ Confirmed — and the confusion had a second source underneath.
   `noise_bank_run_record` builders, which have always allowed it); §5 hygiene clean, `src/` fully
   tracked; §6 full diff read.
 - **Depends on:** all prior steps.
+
+### S12 — stamp the ClassifierBank's own id (CL-145) ✅ (2026-08-11)
+
+Caught during the wave-completion check, *after* S8 had marked the phase 12/12 — a reminder that a
+green plan doc is not evidence.
+
+- **Why it was invisible:** CL-145 is `[RESOLVED]`, because project-lead adjudicated the ruling on
+  2026-08-08 and assigned the implementation to iafdb Wave 2. The log's inbox convention is to grep
+  `[OPEN]` + `TO **iafdb-pipeline**`, which returns nothing for it. **`[RESOLVED]` tracks the
+  conversation, not the work.** Found by exporting a ClassifierBank and looking at its root attrs
+  rather than by reading the log.
+- **Change:** `derive_classifier_bank_id(has_labels=...)` in `ids.py`; `export_bank` stamps `cb.id`
+  between the converter and the writer. Role follows **label presence**, not the source bank's
+  prefix and not the configured policy name.
+- **Verify:** all four (threshold × label-policy) combinations exported from real IAFDB data and
+  passed through egm-data's own `check_classifier_bank_id_matches_content`, which enforces the same
+  mapping in both directions — so the producer's derivation and the contract's check are one rule,
+  not two that happen to agree today. Four new tests pin it.
+- **Left deliberately unfixed:** `ptbank_` still over-claims. These banks are feature-comparison or
+  inference input, not pretraining data. Daniel's call: use `ptbank_` now since the content is the
+  same, and sharpen the vocabulary in **FB-19**, which already tracks three other artifacts with the
+  same problem. Recorded under *Known issues* in the roadmap so it is not rediscovered.
 
 ## Complexity + estimate
 

@@ -65,6 +65,24 @@ All notable changes to `iafdb-pipeline` are documented here. The format follows
   "unknown", and `activation_position` is never defaulted to `0.0`, which is a legitimate
   position value.
 
+- **Stable id on the paired ClassifierBank** (CL-145). The iafdb→ClassifierBank export wrote no
+  root `id` at all, so egm-studio could not index the file into a phase — correctly refusing rather
+  than inventing one, since an artifact must carry its own identity. It now derives and stamps one.
+  - **The role follows label presence, not the source bank.** Labels present → `tbank_`, absent →
+    `ptbank_`. Reusing the source id would have produced the over-claiming `tbank_`-with-no-labels
+    that egm-data's `check_classifier_bank_id_matches_content` refuses in both directions.
+  - **The pair can therefore legitimately disagree**, which is the part that reads as a bug: a
+    `threshold.mode: absolute` + `label_policy: unlabeled` run writes a `tbank_` iafdb bank next to
+    a `ptbank_` ClassifierBank. The prefixes answer different questions — selection vs what a
+    consumer may do with the file. All four combinations are covered by tests that run egm-data's
+    own checker over the produced artifact, so the derivation and the contract cannot drift apart.
+  - Derived from the **produced bank** rather than the configured `label_policy` name, since
+    `export_bank` takes a caller-supplied `label_fn` and what lands in the file is the authority.
+  - `ptbank_` remains an imperfect fit — these banks are feature-comparison input for egm-studio or
+    unlabeled inference input for egm-classifier, neither of which is "pretraining". It is the least
+    wrong of the existing vocabulary; sharpening it is **FB-19**, which already tracks three other
+    artifacts with the same problem.
+
 - **`unlabeled` label policy** (`format.label_policy: unlabeled`) — the `label_fn` returns
   `None`, leaving every `label_truth` unset; the honest IAFDB policy that feeds an unlabeled
   `upred_` eval (IAFDB has no fibrosis ground truth).
