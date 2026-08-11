@@ -70,4 +70,21 @@ activation:
     seed: null                             # fresh random stream each run
 
 calibration:
-  target_qrs_pp_mv: 1.0
+  # REQUIRED, no default — the choice must be written down.
+  #
+  # `none`: traces are emitted in the recorded nominal mV, unscaled. This is
+  # what research recommends as the honest default. R-wave anchoring — the
+  # alternative — was ruled NON-STANDARD FOR EGM (2026-08-09): it normalizes
+  # an intracardiac signal by a surface-ECG QRS amplitude, which is a category
+  # error as physiology and survives only under a shared amplifier-gain
+  # premise that is unverified on IAFDB. See project/architecture.md ->
+  # "Calibration", and examples/iafdb_healthy_default.yaml for the case where
+  # anchoring is still the right call.
+  #
+  # Consequence to keep in mind: nominal mV is internally consistent WITHIN a
+  # record and not comparable ACROSS records, so amplitude selection here
+  # should be scale-invariant (threshold.mode: percentile) rather than a fixed
+  # mV cut. Setting `mode: absolute` alongside this warns for that reason.
+  #
+  # In this config specifically: activation windowing never consults amplitude, so calibration is pure overhead here.
+  method: none

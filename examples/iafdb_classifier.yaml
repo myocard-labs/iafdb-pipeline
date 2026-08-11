@@ -47,4 +47,14 @@ windowing:
   hop_ms:    256.0
 
 calibration:
+  # REQUIRED, no default. Every trace is multiplied by a per-record scalar
+  # derived from a surface-ECG QRS amplitude (0.27-1.45x across this corpus).
+  #
+  # RULED NON-STANDARD FOR EGM (2026-08-09). Retained only under a shared
+  # amplifier-gain premise, never as a physiological normalizer, and that
+  # premise is unverified on IAFDB. `none` is the intended default and is
+  # not yet writable -- the iafdb_bank schema pins calibration_method to a
+  # single-value enum (CL-154). Prefer `none` here as soon as it lands.
+  # See project/architecture.md -> "Calibration".
+  method: r_wave_anchoring
   target_qrs_pp_mv: 1.0

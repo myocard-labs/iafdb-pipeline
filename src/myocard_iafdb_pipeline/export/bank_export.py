@@ -57,16 +57,23 @@ from myocard_egm_signal import (
     extract_healthy_segments,
 )
 
-from myocard_iafdb_pipeline.cli._config import ActivationConfig
+from myocard_iafdb_pipeline.cli._config import ActivationConfig, CalibrationMethod
 from myocard_iafdb_pipeline.constants import BIPOLAR_CHANNELS, SAMPLING_RATE_HZ
 from myocard_iafdb_pipeline.exceptions import EmptyBankWarning
 from myocard_iafdb_pipeline.export.activation_extract import (
+    UNUSED_CALIBRATION_TARGET_MV,
     UNUSED_HOP_MS,
     UNUSED_PEAK_TO_PEAK_MV,
     ActivationSegment,
     ChannelTally,
     build_position_generator,
     extract_activation_segments,
+)
+from myocard_iafdb_pipeline.export.report import (
+    RecordDiagnostics,
+    build_report,
+    relative_to_bank,
+    write_report,
 )
 from myocard_iafdb_pipeline.ids import derive_iafdb_bank_id, validate_artifact_id
 from myocard_iafdb_pipeline.records import IAFDBRecord
@@ -105,6 +112,8 @@ class BankExportResult:
     per_patient_counts: dict[str, int]
     per_channel_counts: dict[str, int]
     written: bool = True
+    # Set when --report was requested and a sidecar was written.
+    report_path: Path | None = None
     # Populated in activation mode only: per record+channel yield accounting.
     # Empty for the sliding path, which has no drop reasons to report.
     channel_tallies: tuple[ChannelTally, ...] = ()
@@ -125,13 +134,53 @@ def _threshold_provenance(threshold: ThresholdStrategy) -> tuple[str, float | No
     return str(threshold.name), float("nan")
 
 
+def _record_diagnostics(
+    record: IAFDBRecord,
+    calibration: Any,
+    *,
+    segments_kept: int,
+    tallies: tuple[ChannelTally, ...],
+) -> RecordDiagnostics:
+    """Capture what the audit report needs, while it is still in scope.
+
+    Deliberately built for **every** record, including ones that
+    contributed nothing. A record absent from the bank is invisible
+    afterwards, and "which records produced no usable data, and what was
+    their calibration" is exactly the question the report exists to answer.
+
+    ``calibration`` is ``None`` under ``method: none``. The record still
+    gets an entry — the per-record *yield* accounting is just as useful
+    uncalibrated — but every calibration field comes back null rather than
+    filled with a plausible-looking stand-in. A scalar of ``1.0`` in the
+    report would be indistinguishable from an anchoring run that happened
+    to measure a scalar of 1.0, and the sidecar's whole purpose is to say
+    what actually happened.
+    """
+    meta = getattr(calibration, "metadata", None) or {}
+    surface = tuple(c for c in record.channel_names if c not in BIPOLAR_CHANNELS)
+    return RecordDiagnostics(
+        record_name=record.name,
+        patient_id=record.patient,
+        placement=record.placement,
+        calibration_scalar=(float(calibration.scalar) if calibration is not None else None),
+        calibration_lead=meta.get("lead"),
+        measured_qrs_pp_mv=meta.get("measured_qrs_pp"),
+        n_beats=meta.get("n_beats"),
+        surface_leads=surface,
+        segments_kept=segments_kept,
+        channel_tallies=tallies,
+    )
+
+
 def export_bank(
     output_path: Path | str,
     *,
     records: Iterable[IAFDBRecord],
     threshold: ThresholdStrategy,
-    target_qrs_pp_mv: float,
+    calibration_method: CalibrationMethod,
+    target_qrs_pp_mv: float | None = None,
     activation: ActivationConfig | None = None,
+    report_path: Path | str | None = None,
     window_ms: float = DEFAULT_WINDOW_MS,
     hop_ms: float = DEFAULT_HOP_MS,
     band_hz: tuple[float, float] = DEFAULT_BIPOLAR_BAND_HZ,
@@ -177,6 +226,22 @@ def export_bank(
         for the same reason, after the two copies drifted (1.5 vs 1.0) and
         the same code calibrated to different scales depending on whether
         it was entered through the CLI or called directly.
+    calibration_method
+        What the audit report records as the normalization applied. Kept
+        as a *reported* value rather than a switch because there is
+        currently nothing to switch to: ``iafdb_bank``'s schema pins
+        ``calibration_method`` to ``enum ['r_wave_anchoring']``, so this
+        is the only value a bank can carry (CL-152/CL-153).
+
+        It has a default here where ``target_qrs_pp_mv`` does not, and the
+        asymmetry is deliberate. A default is only defensible when the
+        value is a *constant* rather than a policy choice — with a
+        single-valued enum, it is a constant. The policy question ("should
+        this corpus be amplitude-normalized at all?") is real, and it is
+        enforced where it belongs: ``cli/_config.py`` requires
+        ``calibration.method`` explicitly and refuses to infer it. **When
+        the enum widens, this default must go** and the parameter becomes
+        required, like ``target_qrs_pp_mv``.
     window_ms, hop_ms
         Sliding-window length and stride in milliseconds.
     band_hz
@@ -216,6 +281,19 @@ def export_bank(
             "consumer-side policy decision; this producer does not pick one."
         )
 
+    if calibration_method == "none" and target_qrs_pp_mv is not None:
+        raise ValueError(
+            "target_qrs_pp_mv is set but calibration_method is 'none', so "
+            "nothing is scaled and the target has no effect. Pass "
+            "target_qrs_pp_mv=None, or calibration_method='r_wave_anchoring'."
+        )
+    if calibration_method == "r_wave_anchoring" and target_qrs_pp_mv is None:
+        raise ValueError(
+            "calibration_method='r_wave_anchoring' requires target_qrs_pp_mv "
+            "— it decides what scale the corpus is normalized to and this "
+            "library ships no default (the one default is the CLI's 1.0 mV)."
+        )
+
     output_path = Path(output_path)
     if output_path.exists() and not overwrite:
         raise FileExistsError(f"{output_path} already exists; pass overwrite=True to replace.")
@@ -247,6 +325,7 @@ def export_bank(
     all_scalars: list[float] = []
     activation_segments: list[ActivationSegment] = []
     tallies: list[ChannelTally] = []
+    diagnostics: list[RecordDiagnostics] = []
     contributing_records: list[str] = []
     n_records_processed = 0
 
@@ -265,14 +344,24 @@ def export_bank(
                 "currently supported in the bank export."
             )
 
-        cal = compute_calibration(record, target_qrs_pp_mv=target_qrs_pp_mv)
+        # `none` skips the step entirely rather than calibrating by 1.0:
+        # egm-signal's extractor takes `calibration=None`, and a record with
+        # no usable surface lead or no QRS annotations would raise inside
+        # `compute_calibration` — which must not happen on a path that was
+        # never going to use the result.
+        cal = (
+            compute_calibration(record, target_qrs_pp_mv=target_qrs_pp_mv)
+            if calibration_method == "r_wave_anchoring"
+            else None
+        )
+        scalar = cal.scalar if cal is not None else 1.0
 
         if activation is not None:
             assert position_generator is not None
             record_activation_segments, record_tallies = extract_activation_segments(
                 record,
                 activation,
-                calibration_scalar=cal.scalar,
+                calibration_scalar=scalar,
                 band_hz=band_hz,
                 position_generator=position_generator,
             )
@@ -280,6 +369,14 @@ def export_bank(
             if record_activation_segments:
                 contributing_records.append(record.name)
                 activation_segments.extend(record_activation_segments)
+            diagnostics.append(
+                _record_diagnostics(
+                    record,
+                    cal,
+                    segments_kept=len(record_activation_segments),
+                    tallies=tuple(record_tallies),
+                )
+            )
             continue
 
         record_segments = extract_healthy_segments(
@@ -300,7 +397,10 @@ def export_bank(
                         f"length {seg.signal.size}, expected {window_samples}."
                     )
                 all_segments.append(seg)
-                all_scalars.append(cal.scalar)
+                all_scalars.append(scalar)
+        diagnostics.append(
+            _record_diagnostics(record, cal, segments_kept=len(record_segments), tallies=())
+        )
 
     # Nothing survived: warn and write nothing. A bank with an empty
     # traces group validates fine and is useless — and worse, its presence
@@ -308,6 +408,65 @@ def export_bank(
     # much later by whoever tries to use it. Better to leave no file and
     # say why, while the settings that produced it are still in hand.
     emitted = activation_segments if activation is not None else all_segments
+
+    # Written before the empty-bank guard on purpose. A run that yields
+    # nothing is exactly the run whose diagnostics matter most — it is the
+    # only artifact that can say *which* records produced nothing and under
+    # what settings — so the report is not conditional on a bank existing.
+    # It carries `bank_written` so a reader is never misled by `bank_file`
+    # naming a path that was never created.
+    resolved_report_path: Path | None = None
+    run_record_rel: str | None = None
+    if report_path is not None:
+        resolved_report_path = Path(report_path)
+        run_settings: dict[str, Any] = {
+            "threshold_mode": threshold_mode,
+            "threshold_value": threshold_value,
+            "calibration_method": calibration_method,
+            # `null`, not the bank's +inf sentinel. The sentinel exists only
+            # because the schema requires a positive number; this file has no
+            # such constraint, and `Infinity` is not valid JSON — strict
+            # parsers reject it, so writing it here would make the sidecar
+            # unreadable to exactly the tooling most likely to consume it.
+            "calibration_target_qrs_pp_mv": target_qrs_pp_mv,
+            "band_hz": [float(band_hz[0]), float(band_hz[1])],
+        }
+        if activation is not None:
+            det = activation.detection
+            run_settings["trace_duration_ms"] = float(activation.trace_duration_ms)
+            run_settings["activation"] = {
+                "detection_curve": det.curve,
+                "threshold_rule": det.threshold_rule,
+                "threshold_c": det.threshold_c,
+                "threshold_lam": det.threshold_lam,
+                "threshold_q": det.threshold_q,
+                "min_prominence": det.min_prominence,
+                "refractory_ms": det.refractory_ms,
+                "refine_curve": det.refine_curve,
+                "refine_radius_ms": det.refine_radius_ms,
+                "position_low": activation.position.low,
+                "position_high": activation.position.high,
+                "position_seed": activation.position.seed,
+                "keep_multi_activation": activation.keep_multi_activation,
+            }
+        else:
+            run_settings["window_ms"] = float(window_ms)
+            run_settings["hop_ms"] = float(hop_ms)
+        write_report(
+            resolved_report_path,
+            build_report(
+                bank_path=output_path,
+                bank_id=resolved_bank_id,
+                source=BANK_SOURCE,
+                bank_written=bool(emitted),
+                windowing_mode="activation" if activation is not None else "sliding",
+                run_settings=run_settings,
+                records=diagnostics,
+            ),
+            overwrite=overwrite,
+        )
+        run_record_rel = relative_to_bank(resolved_report_path, output_path)
+
     if not emitted:
         warnings.warn(
             f"No segments survived from {n_records_processed} record(s) — "
@@ -327,6 +486,7 @@ def export_bank(
             per_patient_counts={},
             per_channel_counts={},
             written=False,
+            report_path=resolved_report_path,
             channel_tallies=tuple(tallies),
         )
 
@@ -336,9 +496,11 @@ def export_bank(
             segments=activation_segments,
             source_records=tuple(contributing_records),
             bank_id=resolved_bank_id,
+            calibration_method=calibration_method,
             target_qrs_pp_mv=target_qrs_pp_mv,
             trace_duration_ms=activation.trace_duration_ms,
             band_hz=band_hz,
+            run_record_path=run_record_rel,
         )
     else:
         pyd_bank = _build_iafdb_bank_model(
@@ -348,11 +510,13 @@ def export_bank(
             bank_id=resolved_bank_id,
             threshold_mode=threshold_mode,
             threshold_value=threshold_value,
+            calibration_method=calibration_method,
             target_qrs_pp_mv=target_qrs_pp_mv,
             window_ms=window_ms,
             window_samples=window_samples,
             hop_ms=hop_ms,
             band_hz=band_hz,
+            run_record_path=run_record_rel,
         )
     write_iafdb_bank(pyd_bank, output_path, overwrite=overwrite)
 
@@ -394,6 +558,7 @@ def export_bank(
         n_records_processed=n_records_processed,
         per_patient_counts=dict(sorted(per_patient.items())),
         per_channel_counts=dict(sorted(per_channel.items())),
+        report_path=resolved_report_path,
         channel_tallies=tuple(tallies),
     )
 
@@ -411,11 +576,13 @@ def _build_iafdb_bank_model(
     bank_id: str,
     threshold_mode: str,
     threshold_value: float | None,
-    target_qrs_pp_mv: float,
+    calibration_method: CalibrationMethod,
+    target_qrs_pp_mv: float | None,
     window_ms: float,
     window_samples: int,
     hop_ms: float,
     band_hz: tuple[float, float],
+    run_record_path: str | None = None,
 ) -> _iafdb_bank_models.IafdbBank:
     """Assemble accumulator state into a Pydantic IafdbBank model.
 
@@ -425,10 +592,9 @@ def _build_iafdb_bank_model(
     **Two ``iafdb_bank`` 1.3 fields are deliberately omitted here** (the
     Wave-1 migration adopts the schema at current behavior):
 
-    - ``run_record_path`` — the sidecar pointer. Nothing writes an iafdb
-      run record yet; the ``--report`` generator that does is Wave-2 work
-      (B11b). Pointing at a file that does not exist would be worse than
-      leaving the attr absent.
+    - ``run_record_path`` — the audit-report sidecar pointer, set only when
+      ``--report`` asked for one. Absent otherwise: a pointer to a file
+      nobody wrote is worse than no pointer.
     - ``traces.activation_position`` — the realized ``[0,1]`` anchor the
       activation-aware splitter placed. This producer is still
       sliding-window only, where **no activation anchor exists**, so the
@@ -450,8 +616,12 @@ def _build_iafdb_bank_model(
         "source": BANK_SOURCE,
         "fs_hz": float(SAMPLING_RATE_HZ),
         "trace_duration_ms": float(window_ms),
-        "calibration_method": "r_wave_anchoring",
-        "calibration_target_qrs_pp_mv": float(target_qrs_pp_mv),
+        "calibration_method": calibration_method,
+        "calibration_target_qrs_pp_mv": (
+            float(target_qrs_pp_mv)
+            if target_qrs_pp_mv is not None
+            else UNUSED_CALIBRATION_TARGET_MV
+        ),
         "threshold_mode": threshold_mode,
         "threshold_value": threshold_value,
         "band_hz": [float(band_hz[0]), float(band_hz[1])],
@@ -469,6 +639,10 @@ def _build_iafdb_bank_model(
             "calibration_scalar": [float(c) for c in scalars],
         },
     }
+    # Omitted rather than null when there is no sidecar — the schema says
+    # readers must treat absence as "no run record", not as an error.
+    if run_record_path is not None:
+        doc["run_record_path"] = run_record_path
     # No empty-bank branch: export_bank returns before reaching here when
     # nothing survived, so `segments` is always non-empty by this point.
     return _iafdb_bank_models.IafdbBank.model_validate(doc)
@@ -479,9 +653,11 @@ def _build_activation_bank_model(
     segments: list[ActivationSegment],
     source_records: tuple[str, ...],
     bank_id: str,
-    target_qrs_pp_mv: float,
+    calibration_method: CalibrationMethod,
+    target_qrs_pp_mv: float | None,
     trace_duration_ms: float,
     band_hz: tuple[float, float],
+    run_record_path: str | None = None,
 ) -> _iafdb_bank_models.IafdbBank:
     """Assemble activation-mode segments into a Pydantic IafdbBank.
 
@@ -518,8 +694,12 @@ def _build_activation_bank_model(
         "source": BANK_SOURCE,
         "fs_hz": float(SAMPLING_RATE_HZ),
         "trace_duration_ms": float(trace_duration_ms),
-        "calibration_method": "r_wave_anchoring",
-        "calibration_target_qrs_pp_mv": float(target_qrs_pp_mv),
+        "calibration_method": calibration_method,
+        "calibration_target_qrs_pp_mv": (
+            float(target_qrs_pp_mv)
+            if target_qrs_pp_mv is not None
+            else UNUSED_CALIBRATION_TARGET_MV
+        ),
         "threshold_mode": "none",
         "threshold_value": None,
         "band_hz": [float(band_hz[0]), float(band_hz[1])],
@@ -538,4 +718,6 @@ def _build_activation_bank_model(
             "activation_position": [float(s.activation_position) for s in segments],
         },
     }
+    if run_record_path is not None:
+        doc["run_record_path"] = run_record_path
     return _iafdb_bank_models.IafdbBank.model_validate(doc)

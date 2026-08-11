@@ -198,11 +198,11 @@ def test_one_window_per_well_separated_activation() -> None:
 
     assert len(tallies) == len(BIPOLAR_CHANNELS)
     for tally in tallies:
-        assert tally.detected == len(activations)
+        assert tally.activations == len(activations)
         assert tally.kept == len(activations)
         assert tally.dropped_boundary == 0
         assert tally.dropped_multi_activation == 0
-        assert tally.candidates == tally.detected
+        assert tally.windows_evaluated == tally.activations
     assert len(segments) == len(activations) * len(BIPOLAR_CHANNELS)
     assert all(seg.signal.shape == (WINDOW_SAMPLES,) for seg in segments)
 
@@ -245,7 +245,7 @@ def test_activations_near_the_record_ends_are_dropped_as_boundary() -> None:
     segments, tallies = _extract(record, _config(low=0.5, high=0.5))
 
     for tally in tallies:
-        assert tally.detected == 3
+        assert tally.activations == 3
         assert tally.dropped_boundary == 2
         assert tally.kept == 1
     assert len(segments) == len(BIPOLAR_CHANNELS)
@@ -268,7 +268,7 @@ def test_neighbouring_activation_inside_a_window_is_dropped_as_multi() -> None:
     segments, tallies = _extract(record, _config(low=0.5, high=0.5))
 
     for tally in tallies:
-        assert tally.detected == 3
+        assert tally.activations == 3
         assert tally.dropped_multi_activation == 2
         assert tally.dropped_boundary == 0
         assert tally.kept == 1
@@ -290,23 +290,28 @@ def test_dead_channel_is_counted_and_does_not_abort_the_record() -> None:
     degenerate = [t for t in tallies if t.degenerate]
     healthy = [t for t in tallies if not t.degenerate]
     assert {t.channel for t in degenerate} == {"CS12", "CS90"}
-    assert all(t.detected == 0 and t.kept == 0 for t in degenerate)
+    assert all(t.activations == 0 and t.kept == 0 for t in degenerate)
     assert len(healthy) == len(BIPOLAR_CHANNELS) - 2
     assert all(t.kept == len(activations) for t in healthy)
     assert {seg.source_channel for seg in segments} == set(BIPOLAR_CHANNELS) - {"CS12", "CS90"}
 
 
-def test_drop_counts_partition_the_candidates() -> None:
-    """kept + boundary + multi == one candidate per detected activation.
+def test_drop_counts_partition_the_evaluated_windows() -> None:
+    """kept + boundary + multi == one window evaluated per activation.
 
     The tallies feed §8.1's yield analysis and the paper's methods section, so
-    an accounting leak would misstate how much real data survived."""
+    an accounting leak would misstate how much real data survived.
+
+    Note what this does *not* check: activations merged by refractory
+    suppression never reach the tally at all, because
+    `detect_activation_train` returns only its final train (CL-159). The
+    partition asserted here starts at the detector's output."""
     record = _record_with_activations([20, 1000, 1060, 2500, 3980])
 
     _, tallies = _extract(record, _config(low=0.5, high=0.5))
 
     for tally in tallies:
-        assert tally.candidates == tally.detected
+        assert tally.windows_evaluated == tally.activations
 
 
 def test_positions_vary_across_the_band_and_are_recorded() -> None:
@@ -399,7 +404,7 @@ def test_multi_activation_windows_can_be_kept_on_purpose() -> None:
         assert tally.kept == 3
         # Out-of-bounds is not a policy choice — those have no signal at all.
         assert tally.dropped_boundary == 1
-        assert tally.candidates == tally.detected
+        assert tally.windows_evaluated == tally.activations
 
     assert len(kept) > len(dropped)
     assert all(seg.signal.shape == (WINDOW_SAMPLES,) for seg in kept)
@@ -412,7 +417,7 @@ def test_kept_multi_is_a_subset_of_kept_not_a_fourth_bucket() -> None:
     _, tallies = _extract(record, _config(low=0.5, high=0.5, keep_multi_activation=True))
 
     for tally in tallies:
-        assert tally.candidates == tally.detected
+        assert tally.windows_evaluated == tally.activations
         assert tally.kept_multi_activation <= tally.kept
 
 
@@ -496,6 +501,7 @@ def test_activation_mode_writes_a_bank_that_validates(tmp_path: Path) -> None:
         out,
         records=records,
         threshold=NoThreshold(),
+        calibration_method="r_wave_anchoring",
         target_qrs_pp_mv=1.0,
         activation=_config(low=0.4, high=0.6, seed=3),
         progress=False,
@@ -528,6 +534,7 @@ def test_activation_bank_records_position_and_declares_no_threshold(
         out,
         records=records,
         threshold=NoThreshold(),
+        calibration_method="r_wave_anchoring",
         target_qrs_pp_mv=1.0,
         activation=_config(low=0.4, high=0.6, seed=5),
         progress=False,
@@ -573,6 +580,7 @@ def test_activation_bank_marks_peak_to_peak_unused(tmp_path: Path) -> None:
         out,
         records=records,
         threshold=NoThreshold(),
+        calibration_method="r_wave_anchoring",
         target_qrs_pp_mv=1.0,
         activation=_config(),
         progress=False,
@@ -595,6 +603,7 @@ def test_sliding_mode_is_unchanged_by_the_activation_wiring(tmp_path: Path) -> N
         out,
         records=[record],
         threshold=NoThreshold(),
+        calibration_method="r_wave_anchoring",
         target_qrs_pp_mv=1.0,
         progress=False,
     )
@@ -619,6 +628,7 @@ def test_activation_yield_is_reported_per_channel(tmp_path: Path) -> None:
         tmp_path / "activation.h5",
         records=records,
         threshold=NoThreshold(),
+        calibration_method="r_wave_anchoring",
         target_qrs_pp_mv=1.0,
         activation=_config(),
         progress=False,
@@ -626,4 +636,4 @@ def test_activation_yield_is_reported_per_channel(tmp_path: Path) -> None:
 
     assert len(result.channel_tallies) == len(BIPOLAR_CHANNELS)
     assert sum(t.kept for t in result.channel_tallies) == result.n_segments
-    assert all(t.candidates == t.detected for t in result.channel_tallies)
+    assert all(t.windows_evaluated == t.activations for t in result.channel_tallies)

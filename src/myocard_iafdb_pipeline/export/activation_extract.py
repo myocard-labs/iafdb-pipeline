@@ -112,6 +112,28 @@ Same reasoning, and the same sentinel, as :data:`UNUSED_PEAK_TO_PEAK_MV`.
 """
 
 
+UNUSED_CALIBRATION_TARGET_MV: float = float("inf")
+"""Stand-in for ``calibration_target_qrs_pp_mv`` when ``method: none``.
+
+The third sentinel on this schema, and the one that marks where the line
+sits. ``iafdb_bank`` requires the target with ``exclusiveMinimum: 0``, and
+an uncalibrated run has no target — there is no scale it was normalized
+to, because it was not normalized.
+
+**Why a sentinel here but not for `calibration_method`.** The rule
+egm-contracts adopted with `iafdb_bank` 1.4: *sentinel a field that would
+merely be unused; fix a field that would be untrue.* A target of ``+inf``
+on an uncalibrated bank says "not applicable" — no real target is
+infinite, so it cannot be misread as a measured parameter. Writing
+``calibration_method: "r_wave_anchoring"`` on that same bank would instead
+assert a signal-processing step that never ran, which is why that field
+got a widened enum (CL-154) rather than a sentinel.
+
+Retiring all three sentinels in favour of per-run-type applicability is
+FB-30, deferred to the Phase-2 `iafdb_bank` sweep.
+"""
+
+
 @dataclass(frozen=True)
 class ActivationSegment:
     """One kept window, named after the artifact it becomes.
@@ -154,17 +176,35 @@ class ChannelTally:
     methods section has to state how much real data survived. Reconstructing
     that later means re-running everything, so it is counted as we go.
 
-    ``detected`` is activations found; ``kept``, ``dropped_boundary`` and
-    ``dropped_multi_activation`` partition the candidate windows, one per
-    detected activation. ``kept_multi_activation`` is a **subset of** ``kept``,
-    not a fourth bucket: it is how many surviving windows hold more than one
-    activation, which is zero unless multi-activation windows were allowed
-    through.
+    **This funnel starts at the detector's output, not at the raw signal.**
+    ``activations`` is what ``detect_activation_train`` *returned* — the
+    survivors of the whole chain ``preprocess -> threshold -> select ->
+    suppress (refractory) -> refine``. Peaks discarded inside that chain are
+    not counted anywhere here, and cannot be: the function computes its
+    candidate list as a local and returns only the final index array, so the
+    pre-suppression count is not recoverable through the current egm-signal
+    API. The practical consequence is that **``refractory_ms`` is the one
+    detection knob with no feedback column** — if it is merging genuine
+    activations, the only visible symptom is a low ``activations`` count with
+    nothing to compare it against. Raised with egm-signal; see
+    ``project/architecture.md``.
+
+    Deliberately named ``activations`` rather than ``detected``: egm-signal
+    draws a real distinction between *candidates* (pre-suppression peaks out
+    of ``CandidateSelector``) and *activations* (what survives suppression),
+    and this is the second. "Detected" invited reading it as the top of the
+    funnel, which it is not.
+
+    ``kept``, ``dropped_boundary`` and ``dropped_multi_activation`` partition
+    ``activations`` — one window is evaluated per activation.
+    ``kept_multi_activation`` is a **subset of** ``kept``, not a fourth
+    bucket: it is how many surviving windows hold more than one activation,
+    which is zero unless multi-activation windows were allowed through.
     """
 
     record_name: str
     channel: str
-    detected: int
+    activations: int
     kept: int
     dropped_boundary: int
     dropped_multi_activation: int
@@ -172,7 +212,14 @@ class ChannelTally:
     degenerate: bool = False
 
     @property
-    def candidates(self) -> int:
+    def windows_evaluated(self) -> int:
+        """Windows a keep/drop decision was made about — one per activation.
+
+        Named to stay clear of egm-signal's *candidate*, which means a
+        pre-suppression peak. These are candidate **windows**, a strictly
+        later stage, and conflating the two hides exactly the gap this
+        tally cannot see.
+        """
         return self.kept + self.dropped_boundary + self.dropped_multi_activation
 
 
@@ -293,7 +340,7 @@ def extract_activation_segments(
                 ChannelTally(
                     record_name=record.name,
                     channel=channel,
-                    detected=0,
+                    activations=0,
                     kept=0,
                     dropped_boundary=0,
                     dropped_multi_activation=0,
@@ -346,7 +393,7 @@ def extract_activation_segments(
             ChannelTally(
                 record_name=record.name,
                 channel=channel,
-                detected=int(train.size),
+                activations=int(train.size),
                 kept=len(kept_windows.windows),
                 dropped_boundary=dropped_boundary,
                 dropped_multi_activation=dropped_multi,

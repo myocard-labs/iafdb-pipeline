@@ -128,11 +128,13 @@ def _format_result(result: BankExportResult, *, threshold_descr: str) -> str:
     if result.per_channel_counts:
         per_channel = ", ".join(f"{c}={n}" for c, n in result.per_channel_counts.items())
         lines.append(f"  By channel:           {per_channel}")
+    if result.report_path is not None:
+        lines.append(f"  Audit report:         {result.report_path}")
     return "\n".join(lines)
 
 
 def _format_yield(tallies: tuple[ChannelTally, ...]) -> str:
-    """Summarize activation-mode yield: what was detected, kept and dropped.
+    """Summarize activation-mode yield: activations in, windows out.
 
     Printed because the drop reasons are the operator's tuning signal. A
     bare segment count cannot distinguish "the detector found little" from
@@ -140,28 +142,33 @@ def _format_yield(tallies: tuple[ChannelTally, ...]) -> str:
     this dataset, where every patient is arrhythmic, the second is the
     likely failure. The two drop columns have different remedies, which is
     why they are reported apart rather than summed.
+
+    The header says *after refractory* because this funnel begins at the
+    detector's output: peaks merged by refractory suppression were never
+    counted, and nothing here reports them (see :class:`ChannelTally`).
+    Without that label the first number reads as "activations present in
+    the signal", which it is not.
     """
-    detected = sum(t.detected for t in tallies)
+    activations = sum(t.activations for t in tallies)
     kept = sum(t.kept for t in tallies)
     boundary = sum(t.dropped_boundary for t in tallies)
     multi = sum(t.dropped_multi_activation for t in tallies)
     kept_multi = sum(t.kept_multi_activation for t in tallies)
     degenerate = [t for t in tallies if t.degenerate]
 
-    pct = f"{100.0 * kept / detected:.1f}%" if detected else "n/a"
+    pct = f"{100.0 * kept / activations:.1f}%" if activations else "n/a"
+    kept_note = f" — {kept_multi} hold >1 activation" if kept_multi else ""
     lines = [
-        "  Activation yield:",
-        f"    Detected:           {detected}",
-        f"    Kept:               {kept} ({pct} of detected)",
-        f"    Dropped, boundary:  {boundary}",
-        f"    Dropped, multi:     {multi}",
+        "  Activation yield (one window evaluated per activation):",
+        f"    Activations, after refractory:  {activations}",
+        f"    Kept:                           {kept} ({pct} of activations){kept_note}",
+        f"    Dropped, boundary:              {boundary}",
+        f"    Dropped, multi-activation:      {multi}",
     ]
-    if kept_multi:
-        lines.append(f"    (kept multi-activation: {kept_multi})")
     if degenerate:
         names = ", ".join(f"{t.record_name}/{t.channel}" for t in degenerate)
-        lines.append(f"    Degenerate channels: {len(degenerate)} ({names})")
-    if detected and kept == 0:
+        lines.append(f"    Degenerate channels:            {len(degenerate)} ({names})")
+    if activations and kept == 0:
         lines.append(
             "    NOTE: activations were detected but every window was dropped. "
             "If most were multi-activation, the detection settings are not "
@@ -188,6 +195,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Replace existing outputs. Off by default to protect previous runs.",
     )
     parser.add_argument(
+        "--report",
+        type=Path,
+        metavar="PATH",
+        default=None,
+        help=(
+            "Also write a JSON audit report to PATH: per-record calibration "
+            "(scalar, lead used, measured QRS p-p), the run settings, and the "
+            "per-channel kept/dropped breakdown. The bank records a relative "
+            "pointer to it. Written even if the run yields no bank."
+        ),
+    )
+    parser.add_argument(
         "--no-progress",
         action="store_true",
         help="Suppress the per-record tqdm progress bar.",
@@ -209,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
             output_path=cfg.output,
             records=records,
             threshold=threshold,
+            calibration_method=cfg.calibration_method,
             activation=cfg.activation,
             window_ms=cfg.window_ms,
             hop_ms=cfg.hop_ms,
@@ -220,6 +240,7 @@ def main(argv: list[str] | None = None) -> int:
             label_fn=label_fn,
             classifier_path=cfg.classifier_output,
             bank_id=cfg.bank_id,
+            report_path=args.report,
         )
     except FileExistsError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -238,6 +259,10 @@ def main(argv: list[str] | None = None) -> int:
         # file exists rather than printing a summary of a bank that isn't
         # there.
         print(f"No bank written to {result.output_path} — nothing survived.", file=sys.stderr)
+        if result.report_path is not None:
+            # The run's only surviving artifact, and the one that says which
+            # records produced nothing — worth naming on the way out.
+            print(f"Audit report: {result.report_path}", file=sys.stderr)
         return 1
 
     threshold_descr = (

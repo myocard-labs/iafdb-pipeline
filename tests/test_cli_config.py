@@ -8,6 +8,7 @@ exercise.
 
 from __future__ import annotations
 
+import re
 import types
 import warnings
 from pathlib import Path
@@ -44,6 +45,8 @@ def test_bank_export_minimum_required_fields(tmp_path: Path) -> None:
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         """,
     )
     cfg = build_bank_export_config(load_yaml(path))
@@ -73,6 +76,8 @@ def test_bank_export_rejects_malformed_bank_id(tmp_path: Path) -> None:
           data_dir: ./data
           output: ./out.h5
           bank_id: NOT-a-valid-id
+        calibration:
+          method: r_wave_anchoring
         """,
     )
     with pytest.raises(ConfigError, match=r"data.bank_id"):
@@ -88,6 +93,8 @@ def test_bank_export_accepts_valid_bank_id(tmp_path: Path) -> None:
           data_dir: ./data
           output: ./out.h5
           bank_id: tbank_iafdb_healthy_2026-06-25
+        calibration:
+          method: r_wave_anchoring
         """,
     )
     cfg = build_bank_export_config(load_yaml(path))
@@ -103,6 +110,8 @@ def test_bank_export_no_filter_mode_nullable_value(tmp_path: Path) -> None:
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         threshold:
           mode: none
         """,
@@ -122,6 +131,8 @@ def test_bank_export_classifier_format(tmp_path: Path) -> None:
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         format:
           type: classifier
           label_policy: all-healthy
@@ -146,6 +157,8 @@ def test_classifier_bank_is_unlabeled_unless_labels_are_asked_for(tmp_path: Path
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         format:
           type: classifier
         """,
@@ -166,6 +179,8 @@ def test_bank_export_rejects_unknown_format(tmp_path: Path) -> None:
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         format:
           type: pickle-of-cats
         """,
@@ -182,6 +197,8 @@ def test_bank_export_rejects_unknown_threshold_mode(tmp_path: Path) -> None:
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         threshold:
           mode: vibes-based
         """,
@@ -198,6 +215,8 @@ def test_bank_export_missing_required_path_raises(tmp_path: Path) -> None:
         """
         data:
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         """,
     )
     with pytest.raises(ConfigError, match="data_dir"):
@@ -215,6 +234,8 @@ def test_bank_export_absolute_paths_pass_through(tmp_path: Path) -> None:
         data:
           data_dir: {abs_data}
           output: {abs_out}
+        calibration:
+          method: r_wave_anchoring
         """,
     )
     cfg = build_bank_export_config(load_yaml(path))
@@ -376,6 +397,8 @@ def test_windowing_mode_defaults_to_sliding_with_no_activation_block(tmp_path: P
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         """,
     )
     cfg = build_bank_export_config(load_yaml(path))
@@ -393,6 +416,8 @@ def test_activation_mode_parses_the_full_block(tmp_path: Path) -> None:
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         windowing:
           mode: activation
         activation:
@@ -445,6 +470,8 @@ def test_activation_mode_defaults_are_usable(tmp_path: Path) -> None:
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         windowing:
           mode: activation
         """,
@@ -474,6 +501,8 @@ def test_off_grid_trace_duration_warns_but_is_honoured(tmp_path: Path) -> None:
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         windowing:
           mode: activation
         activation:
@@ -496,6 +525,8 @@ def test_on_grid_trace_duration_is_silent(tmp_path: Path) -> None:
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         windowing:
           mode: activation
         activation:
@@ -519,6 +550,8 @@ def test_sliding_only_keys_are_rejected_under_activation_mode(tmp_path: Path) ->
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         windowing:
           mode: activation
           window_ms: 512.0
@@ -537,6 +570,8 @@ def test_activation_block_without_activation_mode_is_rejected(tmp_path: Path) ->
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         activation:
           trace_duration_ms: 192.0
         """,
@@ -553,6 +588,8 @@ def test_botteron_keys_rejected_for_other_curves(tmp_path: Path) -> None:
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         windowing:
           mode: activation
         activation:
@@ -673,6 +710,8 @@ def test_activation_config_rejects_invalid_values(tmp_path: Path, block: str, ma
         data:
           data_dir: ./data
           output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
         """
         + block,
     )
@@ -711,6 +750,7 @@ _BANK_KEYS = [
     "windowing.window_ms",
     "windowing.hop_ms",
     "windowing.band_hz",
+    "calibration.method",
     "calibration.target_qrs_pp_mv",
     "activation.trace_duration_ms",
     "activation.keep_multi_activation",
@@ -791,3 +831,232 @@ def test_every_enum_value_is_demonstrated(key: str, expected: set[str]) -> None:
     seen = {_dig(d, key) for d in _example_docs().values()}
     missing = expected - seen
     assert not missing, f"no example demonstrates {key}={sorted(missing)}"
+
+
+# ---------------------------------------------------------------------------
+# calibration.method — required, never inferred (CL-152)
+# ---------------------------------------------------------------------------
+
+
+def test_calibration_block_is_required(tmp_path: Path) -> None:
+    """A config that says nothing about calibration is an error, not a default.
+
+    This is the regression the whole change exists for: the block used to be
+    optional and its absence silently produced a fully R-wave-anchored bank,
+    so a user could rescale their entire corpus by up to 5x without a single
+    line of config expressing that choice."""
+    path = _write_yaml(
+        tmp_path,
+        """
+        data:
+          data_dir: ./data
+          output: ./out.h5
+        """,
+    )
+    with pytest.raises(ConfigError, match="calibration"):
+        build_bank_export_config(load_yaml(path))
+
+
+def test_calibration_method_is_required_even_when_the_block_exists(tmp_path: Path) -> None:
+    """Setting only the target is not stating a method.
+
+    The likeliest stale config: the block as it looked before this change.
+    It has to fail rather than resume the old behaviour, because the old
+    behaviour is precisely what is being made visible."""
+    path = _write_yaml(
+        tmp_path,
+        """
+        data:
+          data_dir: ./data
+          output: ./out.h5
+        calibration:
+          target_qrs_pp_mv: 1.0
+        """,
+    )
+    with pytest.raises(ConfigError, match=re.escape("calibration.method is required")):
+        build_bank_export_config(load_yaml(path))
+
+
+def test_calibration_method_none_is_accepted(tmp_path: Path) -> None:
+    """`none` is now a real, writable option.
+
+    It was refused for a day, because `iafdb_bank` pinned
+    `calibration_method` to a single-value enum and an uncalibrated bank
+    had no legal value to record. egm-contracts v0.6.1 widened it
+    (CL-154), so this flips from asserting the refusal to asserting the
+    acceptance — the case research recommends as the honest default."""
+    path = _write_yaml(
+        tmp_path,
+        """
+        data:
+          data_dir: ./data
+          output: ./out.h5
+        calibration:
+          method: none
+        threshold:
+          mode: none
+        """,
+    )
+    cfg = build_bank_export_config(load_yaml(path))
+    assert cfg.calibration_method == "none"
+    # No target, rather than a target of 1.0: nothing is scaled, so there
+    # is no scale to record. The +inf the bank stores is a storage
+    # sentinel the export layer adds, not a config value.
+    assert cfg.target_qrs_pp_mv is None
+
+
+def test_target_under_method_none_is_rejected_not_ignored(tmp_path: Path) -> None:
+    """Setting a target that cannot apply is an error.
+
+    Same principle as the cross-mode windowing keys: silently dropping a
+    key the user deliberately set is how a config comes to mean something
+    other than what it says. Here it would imply a calibration scale that
+    nothing applied."""
+    path = _write_yaml(
+        tmp_path,
+        """
+        data:
+          data_dir: ./data
+          output: ./out.h5
+        calibration:
+          method: none
+          target_qrs_pp_mv: 1.0
+        """,
+    )
+    with pytest.raises(ConfigError, match="no effect"):
+        build_bank_export_config(load_yaml(path))
+
+
+def test_absolute_threshold_on_uncalibrated_input_warns(tmp_path: Path) -> None:
+    """An mV cut with no calibration selects differently in every record.
+
+    Warned, not rejected: the recorded nominal-mV scale is a legitimate
+    thing to threshold against if that is what you meant. But without a
+    per-record scalar the amplitudes are only internally consistent within
+    a record, so a fixed 0.2 mV cut lands at a different physiological
+    tier in each — which is exactly the mistake the config is otherwise
+    silent about.
+
+    Note this pairing is reachable *by default*: `threshold.mode` defaults
+    to `absolute`, so a config that sets only `calibration.method: none`
+    lands here. That is deliberate for now — the warning is what makes the
+    interaction visible — but it means the minimal `none` config is the
+    warned one, which is worth revisiting when threshold defaults are next
+    looked at."""
+    path = _write_yaml(
+        tmp_path,
+        """
+        data:
+          data_dir: ./data
+          output: ./out.h5
+        calibration:
+          method: none
+        threshold:
+          mode: absolute
+          value: 0.2
+        """,
+    )
+    with pytest.warns(ConfigWarning, match="uncalibrated"):
+        cfg = build_bank_export_config(load_yaml(path))
+    assert cfg.threshold_mode == "absolute"
+
+
+def test_percentile_threshold_on_uncalibrated_input_is_silent(tmp_path: Path) -> None:
+    """The scale-invariant pairing is the recommended one, so it says nothing.
+
+    Guards the warning against firing on the combination research actually
+    recommends — a warning that cries wolf on the good path gets muted."""
+    path = _write_yaml(
+        tmp_path,
+        """
+        data:
+          data_dir: ./data
+          output: ./out.h5
+        calibration:
+          method: none
+        threshold:
+          mode: percentile
+          value: 20.0
+        """,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConfigWarning)
+        cfg = build_bank_export_config(load_yaml(path))
+    assert cfg.calibration_method == "none"
+
+
+def test_calibration_method_rejects_unknown_values(tmp_path: Path) -> None:
+    path = _write_yaml(
+        tmp_path,
+        """
+        data:
+          data_dir: ./data
+          output: ./out.h5
+        calibration:
+          method: fixed_gain
+        """,
+    )
+    with pytest.raises(ConfigError, match=re.escape("Unknown calibration.method")):
+        build_bank_export_config(load_yaml(path))
+
+
+def test_target_still_defaults_once_a_method_is_stated(tmp_path: Path) -> None:
+    """The target keeps its default; only the method lost one.
+
+    The split is the design: `method` decides whether a transform happens at
+    all, `target_qrs_pp_mv` only picks the units it lands in and is inert
+    without it. 1.0 is what every bank on disk was built with."""
+    path = _write_yaml(
+        tmp_path,
+        """
+        data:
+          data_dir: ./data
+          output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
+        """,
+    )
+    cfg = build_bank_export_config(load_yaml(path))
+    assert cfg.calibration_method == "r_wave_anchoring"
+    assert cfg.target_qrs_pp_mv == 1.0
+
+
+def test_nonpositive_target_is_rejected(tmp_path: Path) -> None:
+    """A zero or negative target divides the corpus by nonsense.
+
+    Caught at config-load rather than at the write step, where the schema's
+    exclusiveMinimum would eventually catch it after the whole run."""
+    path = _write_yaml(
+        tmp_path,
+        """
+        data:
+          data_dir: ./data
+          output: ./out.h5
+        calibration:
+          method: r_wave_anchoring
+          target_qrs_pp_mv: 0.0
+        """,
+    )
+    with pytest.raises(ConfigError, match=re.escape("target_qrs_pp_mv must be > 0")):
+        build_bank_export_config(load_yaml(path))
+
+
+def test_noise_export_does_not_require_a_calibration_block(tmp_path: Path) -> None:
+    """The noise path never calibrates, so the requirement must not leak.
+
+    It already reports `calibration_method: none` in its run record — the
+    asymmetry is by design, and making the trace path explicit should not
+    drag a meaningless key onto the noise side."""
+    path = _write_yaml(
+        tmp_path,
+        """
+        data:
+          data_dir: ./data
+          output: ./noise.h5
+        threshold:
+          mode: percentile
+          value: 20.0
+        """,
+    )
+    cfg = build_noise_bank_export_config(load_yaml(path))
+    assert cfg.threshold_mode == "percentile"

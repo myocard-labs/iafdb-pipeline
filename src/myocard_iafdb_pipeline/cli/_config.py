@@ -137,6 +137,16 @@ ThresholdMode = Literal["absolute", "percentile", "none"]
 # whole config block rather than a flag.
 WindowingMode = Literal["sliding", "activation"]
 
+# How (and whether) per-record amplitude normalization is applied.
+#
+# `none` is declared here but rejected at parse time: iafdb_bank's schema
+# pins `calibration_method` to enum ['r_wave_anchoring'], so an uncalibrated
+# bank cannot round-trip yet (CL-152/CL-153). It is in the type rather than
+# omitted because the *config* now demands an explicit choice, and a reader
+# should be able to see the full intended value set — including the one
+# blocked on a contract change — rather than infer that only one exists.
+CalibrationMethod = Literal["r_wave_anchoring", "none"]
+
 # The detection curve `g` that peaks at activations (egm-signal's
 # DetectionPreprocessor family). Sharpness vs noise-robustness: the first two
 # spike at every steep deflection, the envelope smooths a fractionated complex
@@ -261,8 +271,102 @@ class BankExportConfig:
     # activation windowing — set iff windowing_mode == "activation"
     activation: ActivationConfig | None
 
-    # calibration
-    target_qrs_pp_mv: float
+    # calibration — method is stated by the user, never defaulted.
+    # `target_qrs_pp_mv` is None exactly when method == "none"; the +inf
+    # storage sentinel is the export layer's business, not the config's.
+    calibration_method: CalibrationMethod
+    target_qrs_pp_mv: float | None
+
+
+def _build_calibration(doc: dict[str, Any]) -> tuple[CalibrationMethod, float | None]:
+    """Parse the ``calibration:`` block. ``method`` is **required**.
+
+    The only key in this block used to be ``target_qrs_pp_mv``, which sets
+    *what scale* the corpus lands on — there was nothing that said whether
+    to calibrate at all, and `export_bank` called `compute_calibration`
+    unconditionally. Deleting the whole block therefore did not remove
+    calibration; it silently accepted 1.0 mV and anchored anyway.
+
+    That is not a defensible default, because the step is neither small
+    nor settled:
+
+    - **Not small.** Measured across all 32 IAFDB records, the per-record
+      scalar spans 0.2696-1.4495 (5.38x). Every amplitude-derived quantity
+      downstream — the mV thresholds, ``peak_to_peak_mv``, the noise tiers,
+      any amplitude feature — inherits it.
+    - **Not settled — ruled.** R-wave anchoring is **non-standard for EGM**
+      (research, CL-152/CL-153). Anchoring an intracardiac signal to a
+      *surface-ECG* QRS is a category error as a physiological normalizer:
+      near-field atrial and far-field ventricular amplitude share no
+      driver. It survives only under a *shared amplifier gain* premise,
+      unverified on IAFDB — and on `iaf4`, the one patient whose ADC gains
+      are real and identical across all four of its records, the free
+      consistency check fails by 1.91x.
+
+    So the user states the method. There is no default to fall back on and
+    no value that can be inferred; an absent key is an error, not a hint.
+    ``none`` is what research recommends; it is not the default here only
+    because this repo requires the choice to be *written down*, which is a
+    stricter position than defaulting to it.
+    """
+    if not _present(doc, "calibration"):
+        raise ConfigError(
+            "the 'calibration:' block is required and must set 'method'. "
+            "Calibration rescales every trace by a per-record scalar "
+            "(0.27-1.45x across this corpus), and R-wave anchoring has been "
+            "ruled non-standard for EGM — so it is not something a config "
+            "should acquire by saying nothing. Set one of:\n"
+            "  calibration:\n"
+            "    method: none                  # recommended: no rescaling\n"
+            "or\n"
+            "  calibration:\n"
+            "    method: r_wave_anchoring\n"
+            "    target_qrs_pp_mv: 1.0"
+        )
+
+    raw = _optional(doc, "calibration", "method", default=None)
+    if raw is None:
+        raise ConfigError(
+            "calibration.method is required — state it explicitly. "
+            "Accepted: 'none' (no rescaling; the recommended default) or "
+            "'r_wave_anchoring' (per-record scaling so each record's median "
+            "surface QRS peak-to-peak equals target_qrs_pp_mv)."
+        )
+    if raw == "none":
+        # No rescaling: traces are emitted in the recorded nominal mV. A
+        # target is meaningless here, so setting one is rejected rather than
+        # ignored — an inert value that looks live is the failure this whole
+        # block exists to remove.
+        if _present(doc, "calibration", "target_qrs_pp_mv"):
+            raise ConfigError(
+                "calibration.target_qrs_pp_mv is set but calibration.method "
+                "is 'none', so nothing is scaled and the target has no "
+                "effect. Remove the target, or set "
+                "method: r_wave_anchoring if you meant to calibrate."
+            )
+        return "none", None
+    if raw != "r_wave_anchoring":
+        raise ConfigError(
+            f"Unknown calibration.method: {raw!r}. Accepted: 'none', 'r_wave_anchoring'."
+        )
+    method: CalibrationMethod = "r_wave_anchoring"
+
+    # Why 1.0 mV: it is the value every bank on disk was produced with, and
+    # every example config carries it, so keeping it means no corpus is
+    # re-scaled. The number is a normalization convention, not a clinical
+    # threshold — anchoring divides by the per-record median QRS
+    # peak-to-peak, so the target only sets the units the corpus lands in.
+    # Deliberately not the 1.5 mV egm-signal used to default to; that copy
+    # drifted from this one, and this is the one the data followed.
+    #
+    # This one keeps a default where `method` does not, and the split is
+    # the point: `method` decides *whether a transform is applied at all*,
+    # which the user must own. The target only decides the units that
+    # transform lands in, and is inert without it.
+    target_qrs_pp_mv = float(_optional(doc, "calibration", "target_qrs_pp_mv", default=1.0))
+    if target_qrs_pp_mv <= 0.0:
+        raise ConfigError(f"calibration.target_qrs_pp_mv must be > 0, got {target_qrs_pp_mv}.")
+    return method, target_qrs_pp_mv
 
 
 def _build_activation_config(doc: dict[str, Any], *, fs_hz: float) -> ActivationConfig:
@@ -535,20 +639,27 @@ def build_bank_export_config(doc: dict[str, Any]) -> BankExportConfig:
             "set mode: activation to use it, or remove the block."
         )
 
-    # The constellation's ONE target-amplitude default. egm-signal removed
-    # its own (v0.3.0, B22) on the library-defaults rule, and
-    # export_bank() requires the argument — so this line is the single
-    # place the value is decided, and the only place to change it.
-    #
-    # Why 1.0 mV: it is the value every bank on disk was produced with,
-    # and every example config carries it, so keeping it means no corpus
-    # is re-scaled. The number itself is a normalization convention, not a
-    # clinical threshold — R-wave anchoring divides by the per-record
-    # median QRS peak-to-peak, so the target only sets the units the
-    # calibrated corpus lands in. It is deliberately not the 1.5 mV
-    # egm-signal used to default to; that copy drifted from this one, and
-    # this is the one the data followed.
-    target_qrs_pp_mv = float(_optional(doc, "calibration", "target_qrs_pp_mv", default=1.0))
+    calibration_method, target_qrs_pp_mv = _build_calibration(doc)
+
+    # An absolute mV cut on uncalibrated input selects differently in every
+    # record: without a per-record scalar the recorded amplitudes are in
+    # nominal mV, which is internally consistent within a record and not
+    # comparable across them. The pair is legitimate — you may genuinely
+    # want the recorded scale — so this warns rather than raises. The
+    # scale-invariant alternative is `threshold.mode: percentile`, which is
+    # also what research recommends alongside `none`.
+    if calibration_method == "none" and threshold_mode_raw == "absolute":
+        warnings.warn(
+            "threshold.mode is 'absolute' but calibration.method is 'none', "
+            f"so the {threshold_value} mV cut is applied to uncalibrated "
+            "nominal-mV signal and will select a different amplitude tier in "
+            "every record. Use threshold.mode: percentile for a "
+            "scale-invariant cut, or calibration.method: r_wave_anchoring if "
+            "you need absolute units (noting it is non-standard for EGM — "
+            "see project/architecture.md).",
+            ConfigWarning,
+            stacklevel=2,
+        )
 
     return BankExportConfig(
         data_dir=data_dir,
@@ -564,6 +675,7 @@ def build_bank_export_config(doc: dict[str, Any]) -> BankExportConfig:
         hop_ms=hop_ms,
         band_hz=band_hz,
         activation=activation,
+        calibration_method=calibration_method,
         target_qrs_pp_mv=target_qrs_pp_mv,
     )
 

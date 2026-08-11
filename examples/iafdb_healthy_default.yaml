@@ -37,8 +37,44 @@ windowing:
   band_hz: [30.0, 300.0]                   # clinical bipolar EGM band
 
 calibration:
-  # The target the per-record R-wave anchoring normalizes to. This is the
-  # ONLY place in the constellation this value is defaulted — egm-signal
-  # ships none, and export_bank() requires it explicitly — so a corpus
-  # cannot be calibrated to two different scales depending on entry point.
+  # REQUIRED — there is no default and no way to omit this block.
+  #
+  # What it does: every emitted trace is multiplied by a per-record scalar
+  # a_r = target_qrs_pp_mv / (median QRS peak-to-peak on a surface ECG lead).
+  # It is the single largest transform this pipeline applies, and it is not
+  # visible in the output — the bank stores the scaled signal, not the raw one.
+  #
+  # RULED NON-STANDARD FOR EGM (research, 2026-08-09). Two premises can be
+  # offered for it, and only one survives:
+  #   - Physiological covariation ("the surface R wave is a common reference")
+  #     is a CATEGORY ERROR. Near-field atrial EGM amplitude and far-field
+  #     surface QRS amplitude have no shared physiological driver.
+  #   - Shared amplifier gain — if both channel sets carry one miscalibrated
+  #     per-record gain, anchoring recovers THAT gain. Defensible, and the
+  #     only premise worth stating. UNVERIFIED on IAFDB.
+  #
+  # The evidence: the scalar spans 5.4x across the corpus, so the step does
+  # real work. Its free consistency check (four catheter placements of one
+  # patient share a surface ECG, so should give one scalar) passes for 6 of 8
+  # patients. It fails for 2 — including iaf4, the ONE patient whose ADC
+  # gains are real and identical across all four of its records, which is
+  # exactly where the shared-gain premise is checkable, and where it doesn't
+  # hold (1.91x spread).
+  #
+  # `none` — raw values, scale-invariant processing — is the intended default
+  # and is NOT YET WRITABLE: the iafdb_bank schema pins calibration_method to
+  # a single-value enum, so an uncalibrated bank has no legal value to record
+  # and would have to claim a calibration it never ran. Tracked in CL-154.
+  # Prefer `none` here as soon as it lands.
+  #
+  # Full ruling: project/architecture.md -> "Calibration"; the review is
+  # intracardiac-platform/project/investigations/rwave_anchoring_review.md.
+  method: r_wave_anchoring
+
+  # The scale the corpus lands on. Unlike `method` this one does default —
+  # it only chooses units for a transform you have already opted into, and
+  # is inert without it. 1.0 mV is what every bank on disk was built with.
+  # Still the ONLY place in the constellation this value is defaulted:
+  # egm-signal ships none and export_bank() requires it explicitly, so a
+  # corpus cannot be calibrated to two different scales by entry point.
   target_qrs_pp_mv: 1.0

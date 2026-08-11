@@ -58,6 +58,7 @@ def test_export_bank_absolute_threshold_round_trips(
         out,
         records=[synthetic_record],
         threshold=AbsoluteThreshold(0.1),
+        calibration_method="r_wave_anchoring",
         target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
     )
@@ -78,19 +79,62 @@ def test_export_bank_absolute_threshold_round_trips(
 def test_export_bank_requires_an_explicit_calibration_target(
     synthetic_record: IAFDBRecord, tmp_path: Path
 ) -> None:
-    """Omitting ``target_qrs_pp_mv`` must fail loudly, not fall back.
+    """Anchoring without a target must fail loudly, not fall back.
 
     egm-signal v0.3.0 (B22) deleted ``DEFAULT_TARGET_QRS_PP_MV`` because
     two copies of one policy value had drifted — the library said 1.5 mV,
     this repo's CLI said 1.0 — so the same code calibrated a corpus to a
-    different scale depending on the entry point. Requiring the argument
-    is what makes that class of drift impossible rather than merely fixed,
-    so this asserts the absence of a default as a behaviour."""
-    with pytest.raises(TypeError, match="target_qrs_pp_mv"):
+    different scale depending on the entry point. Requiring the value is
+    what makes that class of drift impossible rather than merely fixed.
+
+    The *mechanism* moved when ``method: none`` shipped: the parameter now
+    defaults to ``None`` (which ``none`` mode needs), so the guard is an
+    explicit either/or rather than a missing-argument ``TypeError``. The
+    behaviour asserted is the same one — no silent fallback."""
+    with pytest.raises(ValueError, match="requires target_qrs_pp_mv"):
+        export_bank(
+            tmp_path / "bank.h5",
+            records=[synthetic_record],
+            threshold=AbsoluteThreshold(0.1),
+            calibration_method="r_wave_anchoring",
+            progress=False,
+        )
+
+
+def test_export_bank_requires_an_explicit_calibration_method(
+    synthetic_record: IAFDBRecord, tmp_path: Path
+) -> None:
+    """And the method itself has no default at the library boundary either.
+
+    The docstring promised this: while ``calibration_method`` had exactly
+    one legal value it was a constant and carried a default, but once the
+    schema admitted ``none`` it became a policy choice, and policy values
+    ship no library default. Asserted so the default cannot creep back."""
+    with pytest.raises(TypeError, match="calibration_method"):
         export_bank(  # type: ignore[call-arg]
             tmp_path / "bank.h5",
             records=[synthetic_record],
             threshold=AbsoluteThreshold(0.1),
+            target_qrs_pp_mv=1.0,
+            progress=False,
+        )
+
+
+def test_export_bank_rejects_a_target_that_cannot_apply(
+    synthetic_record: IAFDBRecord, tmp_path: Path
+) -> None:
+    """A target under ``method: none`` is rejected, not ignored.
+
+    An inert value that looks live is the exact failure this whole seam
+    exists to remove — silently accepting it would let a config claim a
+    calibration scale that nothing ever applied."""
+    with pytest.raises(ValueError, match="no effect"):
+        export_bank(
+            tmp_path / "bank.h5",
+            records=[synthetic_record],
+            threshold=AbsoluteThreshold(0.1),
+            calibration_method="none",
+            target_qrs_pp_mv=1.0,
             progress=False,
         )
 
@@ -117,6 +161,7 @@ def test_iafdb_bank_13_optional_fields_are_absent_not_defaulted(
         out,
         records=[synthetic_record],
         threshold=AbsoluteThreshold(0.1),
+        calibration_method="r_wave_anchoring",
         target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
     )
@@ -139,6 +184,7 @@ def test_export_bank_percentile_threshold_round_trips(
         out,
         records=[synthetic_record],
         threshold=PercentileThreshold(70.0),
+        calibration_method="r_wave_anchoring",
         target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
     )
@@ -162,6 +208,7 @@ def test_export_bank_no_filter_writes_threshold_none(
         out,
         records=[synthetic_record],
         threshold=NoThreshold(),
+        calibration_method="r_wave_anchoring",
         target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
     )
@@ -193,6 +240,7 @@ def test_export_bank_classifier_format_writes_both(
         out,
         records=[synthetic_record],
         threshold=AbsoluteThreshold(0.1),
+        calibration_method="r_wave_anchoring",
         target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
         output_format="classifier",
@@ -224,6 +272,7 @@ def test_export_bank_classifier_unlabeled_policy(
         out,
         records=[synthetic_record],
         threshold=AbsoluteThreshold(0.1),
+        calibration_method="r_wave_anchoring",
         target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
         output_format="classifier",
@@ -249,6 +298,7 @@ def test_export_bank_classifier_format_requires_label_fn(
             tmp_path / "bank.h5",
             records=[synthetic_record],
             threshold=AbsoluteThreshold(0.1),
+            calibration_method="r_wave_anchoring",
             target_qrs_pp_mv=TARGET_QRS_PP_MV,
             progress=False,
             output_format="classifier",
@@ -264,6 +314,7 @@ def test_export_bank_overwrite_guard(synthetic_record: IAFDBRecord, tmp_path: Pa
         out,
         records=[synthetic_record],
         threshold=AbsoluteThreshold(0.1),
+        calibration_method="r_wave_anchoring",
         target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
     )
@@ -272,6 +323,7 @@ def test_export_bank_overwrite_guard(synthetic_record: IAFDBRecord, tmp_path: Pa
             out,
             records=[synthetic_record],
             threshold=AbsoluteThreshold(0.1),
+            calibration_method="r_wave_anchoring",
             target_qrs_pp_mv=TARGET_QRS_PP_MV,
             progress=False,
         )
@@ -280,6 +332,7 @@ def test_export_bank_overwrite_guard(synthetic_record: IAFDBRecord, tmp_path: Pa
         out,
         records=[synthetic_record],
         threshold=AbsoluteThreshold(0.1),
+        calibration_method="r_wave_anchoring",
         target_qrs_pp_mv=TARGET_QRS_PP_MV,
         progress=False,
         overwrite=True,
@@ -448,6 +501,7 @@ def test_no_surviving_segments_writes_no_bank(
             out,
             records=[synthetic_record],
             threshold=AbsoluteThreshold(1e6),  # far above any real amplitude
+            calibration_method="r_wave_anchoring",
             target_qrs_pp_mv=TARGET_QRS_PP_MV,
             progress=False,
         )
@@ -475,6 +529,7 @@ def test_no_surviving_segments_writes_no_classifier_sibling(
             out,
             records=[synthetic_record],
             threshold=AbsoluteThreshold(1e6),
+            calibration_method="r_wave_anchoring",
             target_qrs_pp_mv=TARGET_QRS_PP_MV,
             progress=False,
             output_format="classifier",
