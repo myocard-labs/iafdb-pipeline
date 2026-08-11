@@ -100,7 +100,12 @@ fallback (±5 mV at 14-bit), i.e. *no real per-channel calibration was
 stored*. Patient `iaf4` alone has plausibly-real per-channel gains. So
 $x^{(r)}$ is in **nominal mV**: internally consistent within a record,
 but not comparable in absolute terms across patients. This is the entire
-reason the trace path calibrates (§2.1).
+reason the trace path offers calibration at all (§2.1) — and, since the
+correction on offer has since been demoted, the reason it now offers
+`none` as well. Note the coincidence worth not glossing: `iaf4`, the one
+patient whose gains are real, is also one of the two patients where
+anchoring fails its own consistency check. See
+`project/architecture.md` → "Calibration".
 
 Additional structural facts (`[[iafdb-no-session-timestamps]]`): each
 `.dat` starts at its own sample 0 (no cross-record clock), and the
@@ -158,6 +163,21 @@ a consumer-supplied `label_fn` (`all-healthy` or, honestly for IAFDB,
 `unlabeled`) via the egm-data converter.
 
 ### 2.1 Per-record calibration (R-wave anchoring)
+
+> **Demoted, 2026-08-09.** R-wave anchoring is **non-standard for EGM**
+> and is no longer the assumed step — it is one selectable option, and
+> `none` is the intended default once the schema permits it. It is
+> defensible only under a *shared amplifier gain* premise (both channel
+> sets carrying one miscalibrated per-record gain), never as a
+> physiological normalizer: near-field atrial EGM amplitude and far-field
+> surface QRS amplitude have no shared driver. The premise is unverified
+> on IAFDB, and on the one patient where it is checkable it does not hold.
+> The ruling, the evidence and the alternatives are in
+> `project/architecture.md` → "Calibration"; the review is
+> `intracardiac-platform/project/investigations/rwave_anchoring_review.md`.
+>
+> What follows describes the mechanism, which is unchanged. It is no
+> longer an argument that the mechanism is the right thing to do.
 
 `egm_signal.compute_calibration` → `RWaveAnchoring`. Recovers a per-record
 scalar $a_r$ mapping the nominal-mV signal (§0) onto a common scale, using

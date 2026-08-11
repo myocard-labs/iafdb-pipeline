@@ -2,7 +2,7 @@
 
 **Repo:** iafdb-pipeline · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 7/9 steps done — Wave 1 complete for this repo (S0 B22, S1 IAF3, S5+S7 the `theory.md` graduation). Remaining: S2–S4 (IAF1) and S6 (B11b), both **Wave 2**, plus S8 phase-exit.
+**Status:** in progress · **Progress:** 10/12 steps done — Wave 1 complete (S0 B22, S1 IAF3, S5+S7 the `theory.md` graduation) and Wave 2 complete (S2–S4 IAF1, S6 B11b). Remaining: **S8 phase-exit** only. S9 + S10 + S11 shipped.
 **Repo estimate:** **12–23.75 h active · 11 points** across B22 · IAF1 · B20 · B11a · B11b and the
 `theory.md` trim. Cold-start estimates are by **analogy**, not arithmetic —
 `estimation_ledger.csv` is empty, so there is no time-per-point rate to multiply by yet. Ranges are
@@ -233,7 +233,7 @@ Each step is one focused commit, ends green (`ruff format src tests` + `ruff che
 - **Verify:** links resolve; §7.3's description of the pending lift still matches what the sections say.
 - **Depends on:** none. Can ride any earlier commit.
 
-### S6 — `--report` audit sidecar (B11b) ☐ (2–4 h)
+### S6 — `--report` audit sidecar (B11b) ✅ (2026-08-09)
 
 - **Change:** optional `--report PATH` on `iafdb-export-bank`, emitting a JSON sidecar per run:
   per-record median QRS p-p, calibration scalar, the **calibrating lead actually used** and its
@@ -245,6 +245,89 @@ Each step is one focused commit, ends green (`ruff format src tests` + `ruff che
 - **Verify:** the sidecar parses, its per-record entries match the bank's own provenance columns, and
   `run_record_path` resolves relative to the bank; a run without `--report` still leaves the attr unset.
 - **Depends on:** S1 (the attr must exist). S4 if the activation tallies are to appear.
+- **Shipped as specified, plus two additions the spec did not anticipate** (both recorded in
+  `architecture.md`, because both look like defects from outside):
+  - **Every record processed gets an entry, not only the contributing ones.** A record whose
+    windows all dropped is absent from the bank entirely — not even in `source_records` — so
+    restricting the report to contributors would have left the most diagnostic case unreportable.
+  - **The report is written even when the empty-bank guard suppresses the bank**, flagged
+    `bank_written: false`. The spec implicitly assumed a bank exists; an empty run is precisely
+    the run an operator has to debug, and the report is then its only artifact. It is written
+    *before* the bank so the stored pointer can never name a file that was not created.
+
+### S9 — `calibration.method` required (unplanned, 2026-08-09) ✅
+
+Not in the original flow-down. Daniel found it while exercising the B11b sidecar: removing the
+`calibration:` block from a config changed nothing, because `export_bank` called
+`compute_calibration` unconditionally and the block's only key set the *target*, not the method.
+
+- **Change:** `calibration.method` is a required config key with no default; `method: none` is
+  rejected with an error naming the contract blocker; the `--report` sidecar's `calibration_method`
+  now reports the stated value instead of a hardcoded literal; all 9 examples updated; docs +
+  architecture rationale added.
+- **Verify:** old-shape configs fail to load with an actionable message; all 9 examples still load;
+  a real 4-record run is segment-identical to the pre-change run (4447 kept, unchanged).
+- **Escalated, not decided here:** whether R-wave anchoring is valid for intracardiac EGM at all is
+  research's call ([CL-152](../../intracardiac-platform/phases/phase_1_5/coordination_log.md)), and
+  widening the schema enum so `none` becomes writable is egm-contracts' (CL-153). This step fixes
+  only the half this repo owns — the silent default. **A silent default and an unavailable
+  alternative are different problems**, and only the second is blocked upstream.
+- **Measurement produced for research** (all 32 records): per-record scalar spans 5.38x; the
+  within-patient consistency check passes for 6 of 8 patients and fails for 2 by ~2x. Recorded in
+  `project/architecture.md` so it does not live only in the log.
+
+### S10 — `calibration.method: none` (unplanned) ✅ (2026-08-09)
+
+Research ruled R-wave anchoring **non-standard for EGM** (CL-153) and `none` the intended default.
+Daniel escalated the contract change into this phase rather than Phase 2, on the grounds that
+deferring means banks carry a *false* claim about a signal-processing step — as distinct from the
+merely *unused* fields the other two sentinels cover.
+
+- **Unblocked 2026-08-09:** egm-contracts **v0.6.1** + egm-data **v0.6.2** shipped (CL-156/CL-157).
+  `iafdb_bank` 1.4; `schema_version` accepts `["1.3","1.4"]` with 1.4 last, so `current_version()`
+  stamps 1.4 with no writer change on either side.
+- **Verified on real data** (4 IAFDB records, activation mode): validator PASS at schema 1.4,
+  `calibration_method: none`, target `+inf`, all 4447 scalars `1.0`, and the emitted traces differ
+  from the anchored run by exactly the scalar (p-p ratio 2.5587 = 1/0.3908, matching iaf1_svc's
+  measured QRS p-p). Segment count identical to the anchored run, as expected — calibration does
+  not affect windowing.
+- **Was blocked on:** egm-contracts widening `iafdb_bank.calibration_method` to
+  `["r_wave_anchoring", "none"]`, **then egm-data re-pinned and tagged** (CL-154). Measured surface:
+  one schema line, no egm-data code change, no consumer branches on the value, no test asserts the
+  rejection, existing banks stay valid. `calibration_target_qrs_pp_mv` stays required and takes a
+  `+inf` sentinel — that is what keeps egm-data code-free.
+- **Ordering — do not violate:** no example config flips to `method: none` until the re-pinned
+  egm-data is tagged, or the bank is unreadable by the library that wrote it.
+- **Change:** drop the parse-time refusal; uncalibrated path
+  (`calibration=None` into extraction, per-trace `calibration_scalar = 1.0` per the noise-path
+  precedent, target `= +inf`); `--report` records the real method; flip most examples to `none`;
+  `ConfigWarning` for `none` + `threshold.mode: absolute`, which applies an mV cut to uncalibrated
+  data and so selects differently in every record.
+- **Docs shipped ahead of the code (2026-08-09)**, deliberately: `architecture.md` was arguing the
+  premise research ruled a category error, so leaving it in place until the code caught up would
+  have kept a wrong justification in the repo for no benefit.
+
+### S11 — yield-tally naming + the funnel's boundary (unplanned) ✅ (2026-08-10)
+
+From Daniel's review of S6: `detected` and `kept` describe something narrower than the names imply.
+Confirmed — and the confusion had a second source underneath.
+
+- **What was actually wrong:** `detected` counts `detect_activation_train`'s *output*, i.e. survivors
+  of `preprocess → threshold → select → suppress (refractory) → refine`. The name read as the top of
+  the funnel; it is the middle. Separately, `ChannelTally.candidates` meant *candidate windows* —
+  colliding with egm-signal's `CandidateSelector` sense of "candidate", which is the pre-suppression
+  peak, i.e. precisely the thing being asked about.
+- **Change:** renamed `detected` → `activations` and `candidates` → `windows_evaluated`, following
+  egm-signal's own candidate-vs-activation split; CLI header now says "after refractory" outright;
+  the gap documented in `docs/usage.md` and `project/architecture.md` (asymmetry table).
+  `report_version` stays `"1"` — the sidecar has never been committed or read, so a bump would imply
+  a migration path for readers that do not exist (Daniel's call).
+- **Not fixable here:** the pre-suppression count is not exposed by egm-signal at all — `candidates`
+  and `accepted` are locals in `detect_activation_train`. So `refractory_ms` is the only detection
+  knob with no feedback column. Raised as **CL-159** with three possible shapes, including "do
+  nothing and I will document the gap as permanent".
+- **Verify:** 147 tests green; real 4-record run regenerated so the `docs/usage.md` sample carries
+  the new keys rather than hand-edited ones.
 
 ### S7 — `theory.md` trim to consumption-only ✅ (2026-08-06)
 

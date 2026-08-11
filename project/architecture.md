@@ -222,33 +222,184 @@ Until then, the run record records `calibration_method="none"`, and
 the absolute-threshold example explicitly notes that the input
 should be calibrated upstream.
 
-## Why R-wave anchoring (and not fixed gain)
+## Calibration: what R-wave anchoring is for, and what it is not
 
-IAFDB's WFDB headers carry ADC gains, but those gains differ across
-records and reflect the acquisition system, not the physiology. R-wave
-anchoring normalizes by the per-record median QRS peak-to-peak on a
-chosen surface ECG lead, so the bipolar EGM amplitudes become
-comparable across records.
+**Ruled non-standard for EGM by research, 2026-08-09** (CL-152/CL-153,
+`intracardiac-platform/project/investigations/rwave_anchoring_review.md`).
+It is retained as a *selectable, demoted* option under one specific
+premise, and `none` is the intended default. This section records the
+ruling rather than the case that preceded it, because the case that
+preceded it was partly wrong and is worth naming as such.
 
-Three options were on the table:
+### The two premises, only one of which survives
 
-- **Fixed gain from the WFDB header.** Rejected: the header gain is
-  acquisition-system-specific, and using it as the calibration scalar
-  produces banks where 0.5 mV in record A and 0.5 mV in record B
-  represent different physiological amplitudes.
-- **Per-record peak normalization** (divide by per-record max p-p).
-  Rejected: noisy outliers dominate the max; the resulting calibration
-  is unstable record-to-record.
-- **R-wave anchoring on the surface ECG.** The chosen design. The
-  surface ECG R wave is a physiological reference common across
-  records; anchoring its median peak-to-peak to a chosen target
-  (default 1.0 mV) gives per-record scalars that bring the bipolar
-  EGM amplitudes into comparable units. The lead selection logic tries
-  a priority list (II → I → V1 → aVF → aVL → III → aVR → V5) and
-  records the actually-used lead in the per-trace metadata.
+R-wave anchoring divides every bipolar EGM channel by the per-record
+median QRS peak-to-peak measured on a surface ECG lead. Two different
+arguments can be made for why that ratio means anything, and they are
+not equally good:
+
+- **Physiological covariation — a category error.** "The surface R wave
+  is a physiological reference common across records, so anchoring it
+  brings EGM amplitudes into comparable units." This was the
+  justification written here, and it does not hold. Bipolar atrial EGM
+  amplitude is a *near-field local* quantity, set by wavefront-to-bipole
+  angle, electrode size and spacing, contact force, and fibrosis. Surface
+  QRS amplitude is *ventricular far-field*, set by ventricular mass, body
+  habitus, and lead placement. There is no shared physiological driver,
+  so there is no reason for the two to covary — and the covariation test
+  the premise implies would be expected to fail.
+- **Shared amplifier gain — defensible, unverified here.** If the surface
+  and intracardiac channels pass through one amplifier/digitizer chain
+  carrying a single miscalibrated per-record gain, then anchoring the
+  surface QRS to its assumed-true amplitude recovers *that gain*, and the
+  recovered scalar applies to the intracardiac channels for electronic
+  reasons rather than physiological ones. This is the premise egm-signal's
+  own docstring states, and it is the only one worth keeping. **It has not
+  been verified for IAFDB.**
+
+The distinction is not academic: under the first premise the scalar is a
+physiological normalizer and could be trusted for absolute voltage; under
+the second it is a gain correction and is only as good as the assumption
+that one gain is shared. Everything below is about testing the second.
+
+### Prior art: essentially none for this purpose
+
+Standard electroanatomic mapping applies voltage thresholds to
+recording-system-calibrated mV directly — there is no calibration step of
+this kind to cite. The surface-to-intracardiac R-wave *ratio* does appear
+in the literature, but for **catheter localization** (the ventricular
+far-field grows as the catheter approaches the heart) — a different
+signal used for a different purpose. egm-signal's `RWaveAnchoring`
+docstring already says plainly that this is "an engineering response to
+the calibration gap", not a literature method. Treat any writeup
+accordingly.
+
+### The IAFDB evidence
+
+Calibration has a free internal consistency check: each patient
+contributes four records differing only in catheter placement, sharing
+one surface ECG, so their four scalars should agree. Measured across all
+32 records at a 1.0 mV target:
+
+```
+whole corpus:      0.2696 - 1.4495  (5.38x)   median 0.4605   CV 0.541
+between patients:  0.2707 - 1.1873  (4.39x)   (per-patient medians)
+within patient:    median 1.05x  —  but iaf4 1.91x, iaf7 2.26x
+```
+
+Three things follow:
+
+1. **The step is not near-identity.** A 5.38x spread means it does
+   substantial work, so if the premise is wrong the corpus carries a
+   systematic between-patient amplitude distortion.
+2. **6 of 8 patients pass** at <= 1.10x — genuine support, since that is
+   agreement across four independent catheter placements.
+3. **2 of 8 fail by ~2x** (iaf4 1.91x, iaf7 2.26x).
+
+**The iaf4 failure is the informative one, and it is bad news.**
+egm-signal's docstring records that 7 of 8 IAFDB patients carry a nominal
+fallback ADC gain rather than a real calibrated one. The exception is
+**iaf4** — and iaf4 is one of the two failures. Reading the headers
+directly: 28 of 32 records carry an identical uniform fallback of
+`3277.0` on all eight channels, while iaf4's four records carry one real
+per-channel vector `(980, 990, 392, 2066, 2062, 2072, 2064, 2056)` —
+**the same vector on all four**.
+
+That matters because it closes the escape hatch. The 2-of-8 failures were
+previously unresolvable: the four placements might be one session (making
+a 2x spread a real error) or separate acquisitions with genuinely
+different gains (making the spread correct), and IAFDB has no session
+timestamps to decide. **For iaf4 the headers decide it.** Identical gains
+across all four records means the shared-gain premise predicts identical
+scalars; the measured spread is 1.91x, driven by `iaf4_tva` measuring a
+0.6899 mV QRS against ~1.31 mV for its three siblings at a comparable
+beat count (31 vs 29/32).
+
+So on the one patient where the surviving premise is checkable, it does
+not hold. A plausible reading is that surface electrodes were repositioned
+between placements — which is precisely the point: surface QRS amplitude
+moves for reasons that have nothing to do with the intracardiac gain, and
+anchoring imports that noise into the EGM scale.
+
+This is a yellow flag rather than a formal disqualification — n=1 patient,
+and beat-count or artifact contamination of the median remains a live
+alternative. It is enough to say anchoring must not be trusted as a
+physiological calibration, and must never run as a silent default.
+
+### The alternatives, and what is actually used
+
+- **`none`** — raw recorded values, with scale-invariant or relative
+  processing downstream. Research's recommended default, and what the
+  noise path has always done. The honest option when no gain correction
+  can be justified.
+- **Per-record self-normalization on the *intracardiac* signal** — the
+  clinical relative-voltage approach. If absolute voltage is ever wanted,
+  this beats a cross-domain surface anchor, because at least the reference
+  and the signal are the same measurement.
+- **Fixed gain from the WFDB header** — unusable for 7 of 8 patients,
+  since the header carries a nominal fallback. Recovering that missing
+  gain is the entire motivation for anchoring in the first place.
+- **Per-record peak normalization** (divide by max p-p) — noisy outliers
+  dominate the max.
+
+Lead selection, when anchoring is used, walks a priority list
+(II -> I -> V1 -> aVF -> aVL -> III -> aVR -> V5) and records the
+actually-used lead, which the `--report` sidecar surfaces per record. It
+matters: 28 records anchor on II and 4 (iaf8, which has no II) anchor on
+I, and the two leads do not have the same QRS amplitude, so those four
+are not comparable like-for-like with the rest.
+
+### Why the stakes are lower than the above suggests
+
+Research's assessment, and the strongest reason `none` is safe: **the
+calibration choice feeds no scored metric.** Synthetic traces are in
+relative units (`synthetic_au`, FB-17), so absolute amplitude cannot be
+compared across corpora regardless of what IAFDB does. Amplitude features
+in the STU5 realism distance should therefore be scale-normalized on both
+sides or dropped, and the Sanchez 0.5 mV healthy-segment selection on
+IAFDB should be read as approximate — a per-record *relative* voltage
+threshold being the scale-invariant alternative. IAFDB's own use is
+qualitative-only. So a method change is not phase-blocking and does not
+force bank regeneration.
+
+### What follows in code
+
+`calibration.method` is a **required** config key with no default
+(`cli/_config.py`), so no bank is produced without the choice being
+stated. This diverges from research's recommendation of `none` as the
+*default*, on Daniel's call that a step this consequential should be
+written down rather than inherited — a stricter position than research's,
+and compatible with its stated concern, which was silent defaults rather
+than defaults as such.
+
+`method: none` **is implemented** (egm-contracts v0.6.1 / `iafdb_bank`
+1.4, CL-154), and five of the seven bank examples now use it. It skips
+the step rather than calibrating by 1.0 — which matters, because
+`compute_calibration` raises on a record with no QRS annotations or no
+preferred lead, and that must not happen on a path that was never going
+to use the result. Per-trace `calibration_scalar` is `1.0` and the bank
+records `calibration_method: "none"`.
+
+The one sentinel that remains is `calibration_target_qrs_pp_mv = +inf`,
+because the schema requires a positive number and an uncalibrated run has
+no target. That is the line this episode established, now recorded in
+egm-contracts' `schema_evolution.md`: **sentinel a field that would merely
+be _unused_; fix a field that would be _untrue_.** `peak_to_peak_mv`
+(CL-149) and `hop_ms` (CL-151) took sentinels because they are only
+unused on runs that do not compute them; `calibration_method` could not,
+because the file would have asserted a signal-processing step that never
+ran. Retiring all three in favour of per-run-type applicability is FB-30.
+
+**Interaction to watch:** under `none` the recorded amplitudes are nominal
+mV — internally consistent within a record, not comparable across them —
+so amplitude selection should be scale-invariant. `none` +
+`threshold.mode: absolute` emits a `ConfigWarning` rather than an error,
+since thresholding the recorded scale is a legitimate thing to want. It is
+reachable by default, though, because `threshold.mode` itself defaults to
+`absolute`; worth revisiting when threshold defaults are next examined.
 
 The implementation lives in egm-signal (`RWaveAnchoring`,
-`compute_calibration`). The producer just calls it.
+`compute_calibration`). The producer selects and records it.
 
 ## Channel layouts
 
@@ -330,11 +481,92 @@ Two layers of provenance per bank:
    `calibration_scalar` — even when calibration is "none", these
    columns are present and filled with sentinel values).
 
-The healthy bank doesn't have a sidecar today — the iafdb_bank
-schema carries everything inline. If the producer grows enough
-configuration knobs that the schema can't keep up, a healthy-side
-sidecar joins the noise-side one. The boundary will be re-examined
-when that happens.
+3. **Audit-report JSON for the iafdb bank** (optional, `--report`).
+   Sidecar. Added in Phase 1.5 (B11b), when the prediction in the
+   paragraph this replaced came true: activation mode added a dozen
+   detection knobs and three per-window drop reasons, and the schema
+   could not keep up. It carries the effective run settings, per-record
+   calibration provenance (the lead the priority walk chose, what it
+   measured, the beat count behind it), and the per-channel
+   kept/dropped-by-reason breakdown. The bank points back at it via
+   `run_record_path`, relative to the bank's own directory.
+
+### What the yield funnel does not cover
+
+The per-channel tally reports `activations → kept | dropped_boundary |
+dropped_multi_activation`, and those four numbers partition exactly. It is
+worth being precise about where that funnel *starts*, because the name
+`detected` originally implied it started earlier than it does (renamed to
+`activations` for that reason).
+
+`detect_activation_train` runs `preprocess → threshold → select →
+suppress (refractory) → refine` and returns only the final index array.
+The candidate list produced by the selector, and the subset the refractory
+suppressor merged, are locals inside that function. So the pre-suppression
+count is **not recoverable through the current egm-signal API** — this is
+an absence of capability, not an omission in the report.
+
+The consequence is a real asymmetry in the tuning feedback:
+
+| Knob | Failure mode | Feedback column |
+|---|---|---|
+| `trace_duration_ms` | window overruns the record edge | `dropped_boundary` |
+| detection settings / `𝒫` | neighbouring activation inside the window | `dropped_multi_activation` |
+| **`refractory_ms`** | **genuine activations merged into one** | **none** |
+
+`refractory_ms` is a knob users are expected to tune, and on IAFDB — every
+patient arrhythmic, activations closely spaced — merging is the plausible
+failure. Its only symptom today is a low `activations` count with no
+denominator. The workaround is to sweep it and watch the count move.
+
+Raised with egm-signal as a backlog item: have the detector return, or
+optionally report, the candidate count alongside the accepted train. The
+argument is the same one that justified splitting boundary from
+multi-activation drops rather than summing them — a drop reason with no
+column attached cannot be acted on.
+
+Terminology note, since it caused the original confusion: egm-signal uses
+**candidate** for a pre-suppression peak out of `CandidateSelector` and
+**activation** for what survives suppression. This repo's tally now follows
+that split, and its `windows_evaluated` property is named to avoid
+colliding with the upstream sense of "candidate" — those are candidate
+*windows*, one per activation, a strictly later stage.
+
+### Why the audit report is not schema'd, when the noise run-record is
+
+The two sidecars sit at different points in their lives and are
+governed accordingly. `noise_bank_run_record` has a real cross-repo
+consumer — the synthetic mixer reads it to reproduce a noise bank —
+so its shape is a contract and lives in egm-contracts. The audit
+report's first consumer is the methods paper, which has not been
+written; freezing a schema around a shape nobody has read yet buys
+nothing and costs a migration every time the paper's needs shift. So
+for Phase 1.5 it is **documented but unvalidated** (CL-026): one
+described shape in `docs/usage.md`, a `report_version` string so a
+future schema has something to migrate from, and readers told to
+ignore unknown keys.
+
+The asymmetry is deliberate and temporary, not an oversight. The
+trigger for schema'ing it is a *second* consumer — the moment anything
+other than a human reads the file, the shape is load-bearing and
+belongs in egm-contracts like everything else at a repo boundary.
+
+Two design choices worth recording, because both look like bugs from
+the outside:
+
+- **Every record appears, including ones that contributed nothing.**
+  A record whose windows were all dropped is invisible in the bank —
+  it is not even in `source_records` — so without this the difference
+  between "processed and yielded nothing" and "never reached" is
+  unrecoverable. That distinction is the report's single highest-value
+  output on this dataset, where every patient is arrhythmic and
+  multi-activation drops are the expected failure.
+- **The report is written even when no bank is.** An empty run has no
+  bank to attach diagnostics to, and is exactly the run an operator
+  needs to debug. Writing the report unconditionally, flagged with
+  `bank_written: false`, means the failing case is the one case that
+  is never silent. It is also written *before* the bank, so the
+  pointer the bank stores can never name a file that does not exist.
 
 ## Stable cross-artifact IDs
 

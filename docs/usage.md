@@ -40,7 +40,7 @@ The package ships four console scripts. All four are wired in `[project.scripts]
 | `iafdb-export-bank` | Build an `iafdb_bank.h5` (or a paired ClassifierBank). |
 | `iafdb-export-noise-bank` | Build a `noise_bank.h5` + `noise_bank_run_record.json`. |
 
-The two `export` commands take a positional YAML config plus `--overwrite` and `--no-progress`. The `download` and `inspect` commands keep their argparse flags — they're small enough that a config file would add friction.
+The two `export` commands take a positional YAML config plus `--overwrite` and `--no-progress`; `iafdb-export-bank` also takes `--report PATH`. The `download` and `inspect` commands keep their argparse flags — they're small enough that a config file would add friction.
 
 ### `iafdb-download`
 
@@ -71,13 +71,13 @@ Useful for sanity-checking a fresh download or for confirming that a record has 
 The headline producer. Builds an `iafdb_bank.h5` of high-voltage (or unfiltered) bipolar EGM segments, with the schema, calibration, threshold, and windowing all driven by a YAML config.
 
 ```bash
-iafdb-export-bank CONFIG.yaml [--overwrite] [--no-progress]
+iafdb-export-bank CONFIG.yaml [--overwrite] [--no-progress] [--report PATH]
 ```
 
 The shipped examples cover one scenario each — start with the first, which is the annotated reference:
 
-- `examples/iafdb_healthy_default.yaml` — Kosiuk-adjusted 0.2 mV absolute threshold, sliding windows. The reference config; also shows `data.bank_id` and the Sánchez 0.5 mV alternative.
-- `examples/iafdb_healthy_percentile.yaml` — per-record percentile selection, the scale-invariant alternative to an absolute mV cut.
+- `examples/iafdb_healthy_default.yaml` — Kosiuk-adjusted 0.2 mV absolute threshold, sliding windows. The annotated reference config; also shows `data.bank_id`, the Sánchez 0.5 mV alternative, and one of the two remaining `calibration.method: r_wave_anchoring` examples (an absolute mV cut is where anchoring is load-bearing). The other five bank examples use `none`.
+- `examples/iafdb_healthy_percentile.yaml` — per-record percentile selection, the scale-invariant alternative to an absolute mV cut. Paired with `calibration.method: none`, this is the recommended combination end to end.
 - `examples/iafdb_pretrain.yaml` — `threshold.mode: none`; every windowed segment kept.
 - `examples/iafdb_classifier_unlabeled.yaml` — emits a paired ClassifierBank with **no ground truth**. The honest shape for IAFDB and the default label policy.
 - `examples/iafdb_classifier.yaml` — the same, but labeled `all-healthy`. **Opt-in and unproven** — read the warning at the top of that file before using it.
@@ -91,6 +91,116 @@ iafdb-export-bank examples/iafdb_healthy_default.yaml
 ```
 
 The CLI prints a summary on exit: output paths, number of segments, records processed, records contributing, threshold used, and per-patient / per-channel counts.
+
+#### `--report` — the audit sidecar
+
+`--report PATH` additionally writes a JSON record of *how each record was treated*. The bank's columns already say what each trace is; what they cannot say is which surface lead calibrated a record, how large its QRS reference actually was, or how many candidate windows were discarded and why.
+
+```bash
+iafdb-export-bank examples/iafdb_activation_windows.yaml --report banks/iafdb_activation_report.json
+```
+
+Two things it is uniquely able to answer:
+
+- **A record that contributed nothing leaves no trace in the bank** — not even its name in `source_records`. The report lists every record processed, so "did it fail, or was it never reached?" has an answer.
+- **A run that yields no bank at all still writes a report.** That is the run whose diagnostics matter most, and the report is the only artifact of it. It carries `bank_written: false` so `bank_file` is never misread as a promise that the file exists.
+
+The bank stores a pointer back, in its `run_record_path` root attr, **relative to the bank's own directory** — so the pair survives being moved or copied together. Without `--report` the attr is absent, which the schema defines as "no run record".
+
+The shape (activation mode; sliding mode omits `activation`, `channels` and the activation totals, and carries `window_ms` / `hop_ms` instead):
+
+```json
+{
+  "report_version": "1",
+  "created_utc": "2026-08-09T18:36:17.045043+00:00",
+  "bank_id": "ptbank_iafdb_2026-08-09",
+  "bank_file": "iafdb_activation.h5",
+  "bank_written": true,
+  "source": "iafdb v1.0.0",
+  "windowing_mode": "activation",
+  "run": {
+    "threshold_mode": "none",
+    "threshold_value": null,
+    "calibration_method": "none",
+    "calibration_target_qrs_pp_mv": null,
+    "band_hz": [30.0, 300.0],
+    "trace_duration_ms": 192.0,
+    "activation": {
+      "detection_curve": "rectified_derivative",
+      "threshold_rule": "median_mad",
+      "threshold_c": 1.0,
+      "threshold_lam": 10.0,
+      "threshold_q": null,
+      "min_prominence": null,
+      "refractory_ms": 50.0,
+      "refine_curve": null,
+      "refine_radius_ms": null,
+      "position_low": 0.4,
+      "position_high": 0.6,
+      "position_seed": 20260808,
+      "keep_multi_activation": false
+    }
+  },
+  "totals": {
+    "records_processed": 4,
+    "records_contributing": 4,
+    "segments_kept": 4447,
+    "activations": 5254,
+    "dropped_boundary": 12,
+    "dropped_multi_activation": 795,
+    "kept_multi_activation": 0,
+    "degenerate_channels": 0
+  },
+  "records": [
+    {
+      "record_name": "iaf1_svc",
+      "patient_id": "iaf1",
+      "placement": "svc",
+      "calibration": {
+        "scalar": null,
+        "lead": null,
+        "measured_qrs_pp_mv": null,
+        "n_beats": null
+      },
+      "surface_leads": ["II", "V1", "aVF"],
+      "segments_kept": 698,
+      "channels": [
+        {
+          "channel": "CS12",
+          "activations": 70,
+          "kept": 66,
+          "dropped_boundary": 1,
+          "dropped_multi_activation": 3,
+          "kept_multi_activation": 0,
+          "degenerate": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+Values above are a real four-record run of `examples/iafdb_activation_windows.yaml`, trimmed to one record and one channel — a full run has an entry per record and five per record's `channels`. That example uses `calibration.method: none`, hence the null calibration block; an `r_wave_anchoring` run fills those four fields and sets `calibration_target_qrs_pp_mv` to the configured target. `surface_leads` is reported either way, since which leads a record carries is a fact about the record rather than about the calibration.
+
+Field notes:
+
+- `run.calibration_method` is the value the config stated, not a constant. It was briefly a hardcoded literal here — a field that looked like a recorded decision next to genuine settings like `threshold_mode`, while no decision existed. It now comes from the required `calibration.method` key.
+- **Under `method: none` every calibration field is `null`, not `1.0`.** A reported scalar of `1.0` would be indistinguishable from an anchoring run that happened to measure 1.0. The per-record *yield* accounting is unchanged — it is just as useful uncalibrated.
+- `calibration.lead` is the lead the priority walk actually chose, and `surface_leads` is what it had to choose from — IAFDB records carry three of four possible leads, and which three decides the outcome, so the two only make sense together.
+- **`activations` is the detector's *output*, not what it found in the signal.** It counts what survived the full chain `preprocess → threshold → select → suppress (refractory) → refine`. Peaks merged or discarded *inside* that chain are counted nowhere in this file — see the note below.
+- `channels[].activations` partitions exactly into `kept + dropped_boundary + dropped_multi_activation`, since one window is evaluated per activation. The two drop reasons have different remedies (window length vs detection settings), which is why they are never summed.
+- `kept_multi_activation` counts windows kept *because* `activation.keep_multi_activation: true` — a subset of `kept`, not a fourth bucket.
+- `degenerate: true` marks a channel egm-signal refused as constant or otherwise unmeasurable. The record continues; the channel contributes nothing.
+
+**What this report cannot tell you: where the detection chain lost peaks.**
+
+The yield funnel begins at the detector's output. `detect_activation_train` computes its candidate peaks internally and returns only the final index array, so the count *before* refractory suppression is not recoverable through the current egm-signal API — it is not merely unreported.
+
+The practical consequence: **`refractory_ms` is the only detection knob with no feedback column.** Every stage after detection has one — a window lost to the record boundary or to a neighbouring activation is counted and attributed. But if the refractory window is set too wide and is merging genuine activations, the only symptom here is a low `activations` count with nothing to compare it against. On IAFDB, where every patient is arrhythmic and activations can be closely spaced, that is a live failure mode rather than a theoretical one.
+
+Until egm-signal exposes the candidate count, the way to probe it is to vary `activation.detection.refractory_ms` across runs and watch `activations` move. Raised with egm-signal; see `project/architecture.md`.
+
+**This JSON is documented but not schema-validated.** The other sidecar in this repo, `noise_bank_run_record.json`, has an egm-contracts schema; this one deliberately does not yet. The methods paper is the first real consumer and may reshape these fields, and freezing a contract around a shape nobody has read is a cost with no buyer. `report_version` exists so the eventual schema has something to migrate from — until then, treat unknown keys as ignorable and do not depend on key order.
 
 ### `iafdb-export-noise-bank`
 
@@ -138,6 +248,7 @@ windowing:
   # band_hz: [30.0, 300.0]                     # default — clinical bipolar EGM band
 
 calibration:
+  method: r_wave_anchoring                     # REQUIRED — no default
   target_qrs_pp_mv: 1.0                        # default — passed to R-wave anchoring
 ```
 
@@ -156,7 +267,28 @@ Per-field reference:
 | `windowing.window_ms` | float | `512.0` | Sliding-window length. |
 | `windowing.hop_ms` | float | `256.0` | Stride between adjacent windows. |
 | `windowing.band_hz` | `[low, high]` | `[30, 300]` | Bandpass for peak-to-peak measurement. |
-| `calibration.target_qrs_pp_mv` | float | `1.0` | Target QRS peak-to-peak the R-wave anchoring normalizes to. **This is the only place the value is defaulted** — the programmatic `export_bank()` requires it explicitly, and egm-signal ships no default of its own, so a corpus can't be calibrated to two different scales depending on the entry point. |
+| `calibration.method` | str | **required** | `r_wave_anchoring`. **No default, and the block cannot be omitted** — see the note below. `none` is accepted by the config type but rejected at parse time, because `iafdb_bank`'s schema pins `calibration_method` to a single-value enum (CL-153). |
+| `calibration.target_qrs_pp_mv` | float | `1.0` | Target QRS peak-to-peak the R-wave anchoring normalizes to. Still defaulted, unlike `method`: it only chooses the units a transform you already opted into lands in, and is inert without one. **This is the only place the value is defaulted** — the programmatic `export_bank()` requires it explicitly, and egm-signal ships no default of its own, so a corpus can't be calibrated to two different scales depending on the entry point. |
+
+#### Why `calibration.method` has no default
+
+Until 2026-08-09 the `calibration:` block held only `target_qrs_pp_mv`, and `export_bank` called R-wave anchoring unconditionally. Deleting the block therefore did **not** disable calibration — it silently accepted 1.0 mV and anchored anyway. Every `iafdb_bank` ever written has had every trace multiplied by a per-record scalar that no config expressed a choice about.
+
+That default is not defensible, because the step is neither small nor settled:
+
+- **Not small.** Measured across all 32 IAFDB records, the per-record scalar spans **0.2696–1.4495 (5.38×)**. Everything amplitude-derived downstream inherits it.
+- **Not settled — now ruled.** R-wave anchoring is **non-standard for EGM** and has no prior art for this purpose. It is defensible *only* under a shared-amplifier-gain premise, never as a physiological normalizer, and that premise is unverified on IAFDB. Its free consistency check (four catheter placements of one patient share a surface ECG, so should give one scalar) passes for 6 of 8 patients and **fails for 2 by ~2×** — including `iaf4`, the one patient whose ADC gains are real and identical across all four of its records, which is where the premise is checkable and where it does not hold.
+
+So the method is stated, never inferred. This is a **breaking config change**: a config written before this date fails to load with a message saying what to add. Nothing about the produced banks changed — `r_wave_anchoring` with a 1.0 mV target is what every existing config was already getting.
+
+**`none` is available, and is what most shipped examples now use.** Research recommends raw values with scale-invariant processing; the repo goes one step stricter and requires the choice to be *written down* rather than defaulted, on the view that a step this consequential should not be inherited. `method: none` emits traces in the recorded nominal mV, sets every `calibration_scalar` to `1.0`, and records `calibration_method: "none"` on the bank — which needed `iafdb_bank` **1.4** (egm-contracts v0.6.1, CL-154), since the single-value enum before it left an uncalibrated bank no legal value to record.
+
+Two consequences worth knowing:
+
+- **Nominal mV is comparable *within* a record, not *across* records.** So amplitude selection under `none` should be scale-invariant — `threshold.mode: percentile`. Pairing `none` with `threshold.mode: absolute` is allowed but emits a `ConfigWarning`, because a fixed mV cut then lands at a different tier in every record. Note this pairing is reachable by default, since `threshold.mode` itself defaults to `absolute`.
+- **`calibration_target_qrs_pp_mv` carries `+inf` on the bank** — the schema requires a positive number and there is no target. It reads as "not applicable", matching the `peak_to_peak_mv` and `hop_ms` sentinels. Setting a target in the config under `method: none` is rejected, not ignored. The audit report writes `null` instead, because `Infinity` is not valid JSON.
+
+Background: `project/architecture.md` → "Calibration", and `intracardiac-platform/project/investigations/rwave_anchoring_review.md`.
 
 ### `iafdb-export-noise-bank` config
 
