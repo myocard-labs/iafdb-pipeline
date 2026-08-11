@@ -12,12 +12,20 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from myocard_egm_data.banks import load_classifier_bank, read_iafdb_bank_hdf5
+from myocard_egm_data.banks import (
+    check_classifier_bank_id_matches_content,
+    load_classifier_bank,
+    read_iafdb_bank_hdf5,
+)
 from myocard_egm_data.records import load_noise_bank_run_record
 from myocard_egm_signal import AbsoluteThreshold, NoThreshold, PercentileQuietThreshold
 
 from myocard_iafdb_pipeline.export import export_bank, export_noise_bank
-from myocard_iafdb_pipeline.ids import derive_iafdb_bank_id, derive_noise_bank_id
+from myocard_iafdb_pipeline.ids import (
+    derive_classifier_bank_id,
+    derive_iafdb_bank_id,
+    derive_noise_bank_id,
+)
 from myocard_iafdb_pipeline.records import IAFDBRecord
 
 # egm-signal v0.3.0 (B22) removed the library default for the calibration
@@ -124,6 +132,116 @@ def test_classifier_output_propagates_source_bank_id(
     cb = load_classifier_bank(result.classifier_path)
     assert cb.banks[0].bank_id == result.bank_id
     assert all(t.bank_id == result.bank_id for t in cb.traces)
+
+
+def _unlabeled(bank: object) -> None:
+    return None
+
+
+def _all_healthy(bank: object) -> tuple[np.ndarray, dict[int, str]]:
+    n = len(bank.traces.signal)  # type: ignore[attr-defined]
+    return np.zeros(n, dtype=np.int64), {0: "healthy"}
+
+
+def test_classifier_bank_carries_its_own_id(synthetic_record: IAFDBRecord, tmp_path: Path) -> None:
+    """The ClassifierBank gets a root ``id`` of its own (CL-145).
+
+    Before this it had none, and egm-studio refused to index the file —
+    correctly, since inventing an id for someone else's artifact would
+    manufacture provenance. Asserted on the loaded bank rather than on the
+    return value, because the defect was that nothing reached the file."""
+    out = tmp_path / "bank.h5"
+    result = export_bank(
+        out,
+        records=[synthetic_record],
+        threshold=NoThreshold(),
+        calibration_method="none",
+        progress=False,
+        output_format="classifier",
+        label_fn=_unlabeled,
+    )
+    assert result.classifier_path is not None
+    cb = load_classifier_bank(result.classifier_path)
+    assert cb.id == derive_classifier_bank_id(has_labels=False)
+    assert str(cb.id).startswith("ptbank_")
+
+
+def test_classifier_bank_role_follows_labels_not_the_source_bank(
+    synthetic_record: IAFDBRecord, tmp_path: Path
+) -> None:
+    """A labeled ClassifierBank is a ``tbank_``, whatever the source is.
+
+    The pair can legitimately disagree, which is the part that looks like a
+    bug: here the source is unthresholded (``ptbank_``) while the derived
+    bank carries labels (``tbank_``). The prefixes answer different
+    questions — the source's is about selection, the classifier bank's is
+    about what a consumer may do with it."""
+    out = tmp_path / "bank.h5"
+    result = export_bank(
+        out,
+        records=[synthetic_record],
+        threshold=NoThreshold(),
+        calibration_method="none",
+        progress=False,
+        output_format="classifier",
+        label_fn=_all_healthy,
+    )
+    assert result.classifier_path is not None
+    cb = load_classifier_bank(result.classifier_path)
+    assert str(result.bank_id).startswith("ptbank_")
+    assert str(cb.id).startswith("tbank_")
+
+
+def test_classifier_bank_id_is_not_the_source_id(
+    synthetic_record: IAFDBRecord, tmp_path: Path
+) -> None:
+    """The inverse disagreement, which is the case CL-145 actually reported.
+
+    A thresholded source (``tbank_``) with no labels yields a ``ptbank_``
+    classifier bank. Reusing the source id here would produce exactly the
+    over-claiming ``tbank_``-with-no-labels that egm-data's id-content check
+    exists to refuse."""
+    out = tmp_path / "bank.h5"
+    result = export_bank(
+        out,
+        records=[synthetic_record],
+        threshold=AbsoluteThreshold(0.1),
+        calibration_method="r_wave_anchoring",
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
+        progress=False,
+        output_format="classifier",
+        label_fn=_unlabeled,
+    )
+    assert result.classifier_path is not None
+    cb = load_classifier_bank(result.classifier_path)
+    assert str(result.bank_id).startswith("tbank_")
+    assert str(cb.id).startswith("ptbank_")
+    assert cb.id != result.bank_id
+
+
+@pytest.mark.parametrize("label_fn", [_unlabeled, _all_healthy])
+def test_classifier_bank_id_agrees_with_its_content(
+    synthetic_record: IAFDBRecord, tmp_path: Path, label_fn: object
+) -> None:
+    """egm-data's own id-content check passes on what we stamp.
+
+    The derivation and the check live in different repos and could drift
+    apart; running the contract's checker over the produced artifact is what
+    makes them one rule rather than two that happen to agree. Both label
+    paths, because the check is enforced in both directions."""
+    out = tmp_path / "bank.h5"
+    result = export_bank(
+        out,
+        records=[synthetic_record],
+        threshold=AbsoluteThreshold(0.1),
+        calibration_method="r_wave_anchoring",
+        target_qrs_pp_mv=TARGET_QRS_PP_MV,
+        progress=False,
+        output_format="classifier",
+        label_fn=label_fn,  # type: ignore[arg-type]
+    )
+    assert result.classifier_path is not None
+    check_classifier_bank_id_matches_content(load_classifier_bank(result.classifier_path))
 
 
 # ---------------------------------------------------------------------------

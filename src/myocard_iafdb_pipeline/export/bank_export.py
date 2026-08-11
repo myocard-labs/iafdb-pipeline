@@ -75,7 +75,11 @@ from myocard_iafdb_pipeline.export.report import (
     relative_to_bank,
     write_report,
 )
-from myocard_iafdb_pipeline.ids import derive_iafdb_bank_id, validate_artifact_id
+from myocard_iafdb_pipeline.ids import (
+    derive_classifier_bank_id,
+    derive_iafdb_bank_id,
+    validate_artifact_id,
+)
 from myocard_iafdb_pipeline.records import IAFDBRecord
 
 BANK_SOURCE: str = "iafdb v1.0.0"
@@ -535,6 +539,15 @@ def export_bank(
             pyd_bank,
             bank_path=output_path,
             label_fn=label_fn,
+        )
+        # Stamp the ClassifierBank's own id (CL-145). Without it the file
+        # cannot be indexed into a phase at all — egm-studio refuses rather
+        # than inventing one, which is right: an artifact must carry its own
+        # identity. Derived from what the converter actually produced, not
+        # from the configured policy name, so the id cannot contradict the
+        # content that egm-data checks it against at write time.
+        cb.id = derive_classifier_bank_id(
+            has_labels=any(t.label_truth is not None for t in cb.traces)
         )
         write_classifier_bank(cb, cb_path, overwrite=overwrite)
 

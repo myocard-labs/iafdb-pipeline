@@ -62,6 +62,47 @@ def derive_iafdb_bank_id(threshold_mode: str, *, today: str | None = None) -> st
     return f"{role}_{DATASET_TAG}_{today or _today_utc()}"
 
 
+def derive_classifier_bank_id(*, has_labels: bool, today: str | None = None) -> str:
+    """Default stable id for the paired ClassifierBank export (CL-145).
+
+    **Deliberately not the source `iafdb_bank`'s id.** These are two
+    artifacts and each carries its own identity; reusing the source id
+    would manufacture provenance, and — more concretely — the two can
+    legitimately disagree about their role. A `threshold.mode: absolute`
+    export with `label_policy: unlabeled` produces a `tbank_` iafdb bank
+    (thresholded) sitting next to a `ptbank_` ClassifierBank (no labels).
+    That looks like an inconsistency and is not one: the prefixes answer
+    different questions.
+
+    The role here follows **label presence**, because that is what the
+    prefix promises a consumer. egm-data's
+    :func:`check_classifier_bank_id_matches_content` enforces the same
+    mapping in both directions at write time — a `ptbank_` bank carrying
+    labels is refused, and so is a `tbank_` bank without them — so a
+    derivation that disagreed with the content would not merely be
+    confusing, it would fail the write.
+
+    Derived from the **produced bank** rather than the configured
+    `label_policy` string, so the two cannot drift: `export_bank` takes a
+    caller-supplied ``label_fn``, and a policy name is only the CLI's way
+    of choosing one. What ends up in the file is the authority.
+
+    Note this is only ``tbank_`` / ``ptbank_``. The prediction roles
+    (``lpred_`` / ``upred_``) belong to whatever *evaluates* the bank —
+    this producer never writes predictions, and eval writes a new bank
+    rather than mutating this one.
+
+    Neither prefix is a great fit for what these banks are actually used
+    for — feature comparison against a synthetic bank in egm-studio, or
+    unlabeled inference input to egm-classifier. ``ptbank_`` is the least
+    wrong of the existing vocabulary; sharpening it is **FB-19** (the
+    role-vocabulary study), which already tracks three other artifacts
+    with the same problem.
+    """
+    role = "tbank" if has_labels else "ptbank"
+    return f"{role}_{DATASET_TAG}_{today or _today_utc()}"
+
+
 def derive_noise_bank_id(*, today: str | None = None) -> str:
     """Default stable id for an exported noise bank (recorded on the sidecar)."""
     return f"nbank_{DATASET_TAG}_{today or _today_utc()}"
