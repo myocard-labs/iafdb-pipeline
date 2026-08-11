@@ -12,26 +12,9 @@ component-internal.
 
 ## Phase 1.5 — sim-realism
 
-### Per-record audit reports
-
-The producer prints a one-line summary on exit; a richer per-record report (median QRS p-p,
-calibration scalar, threshold actually applied, windows kept vs rejected, the surface lead
-that won the priority-order selection) is useful for the white-paper methods section and for
-rerunning calibration after a header fix. An optional `--report PATH` flag emitting a JSON
-sidecar next to the bank; pairs with the `iafdb_bank` 1.3 schema bump below.
-
-**Split across two waves** (B11a / B11b): Wave 1 adopts the 1.3 schema and ships
-`run_record_path` **unset**, since there is no report to point at yet; Wave 2 builds the
-generator and populates the pointer. The sidecar is documented-but-unvalidated JSON for
-Phase 1.5 — see the schema-bump note below for when it earns a contracts schema.
-
-Two fields are now cheaper than when this was written: the **calibrating lead** and its
-**surface-set group** fall out of the channel-layout sweep recorded in
-[`architecture.md`](architecture.md) ("Channel layouts"), so the report gets per-record
-calibration provenance essentially for free.
-
-> → Tracked at `intracardiac-platform/project/project_plan.md` Phase 1.5 (per-record outlier
-> hunts during the synthetic-vs-IAFDB feature comparison).
+Per-record audit reports (B11a/B11b), activation-anchored windowing (IAF1), the `noise_bank`
+`bank_id` attr (B20) and the explicit-calibration work all shipped — see
+[`CHANGELOG.md`](../CHANGELOG.md). What remains:
 
 ### Additional label policies
 
@@ -76,13 +59,23 @@ analyses want to dedup at the patient × placement level — likely an optional
 `dedup.scheme: per-patient-placement-pair` config filter, default off to preserve current
 behavior.
 
-### Noise-side opt-in calibration
+### Noise-side opt-in calibration — **re-scope before building**
 
-The noise producer doesn't calibrate today. An opt-in calibration step would make the
-absolute-threshold strategy meaningful on uncalibrated inputs: an optional `calibration:`
-block in the noise-config YAML, `compute_calibration` per record applied before windowing,
-and the run record's `calibration_method` flipping `none → r_wave_anchoring`. Pairs with the
-`noise_bank` 1.1 schema bump below.
+The noise producer doesn't calibrate today, and as originally written this item proposed
+adding R-wave anchoring to it so the absolute-threshold strategy would mean something on
+uncalibrated input.
+
+**That framing is now wrong.** R-wave anchoring was ruled non-standard for EGM in Phase 1.5
+(CL-152/CL-153) and demoted on the *trace* side; adding it to the noise side would be
+importing a method we just stepped back from, in the one place that never needed it — the
+noise path's percentile default is already scale-invariant.
+
+If this is picked up, the question to answer first is what problem it solves that a
+per-record *relative* threshold does not. If the answer is "absolute mV tiers such as the
+Sanders 0.05 mV electrically-silent cut", note research's finding that those literature
+thresholds assume recording-system-calibrated mV, which IAFDB does not provide for 7 of 8
+patients. Keep the `calibration_scalar` schema bump below; drop the assumption that the
+method behind it is anchoring.
 
 ### A second dataset producer (open question)
 
@@ -105,16 +98,19 @@ contracts validators, tag. Upcoming bumps that affect this repo (the cross-artif
 wave already consumed `iafdb_bank` 1.2 + `noise_bank_run_record` 1.1 for `bank_id`, so the
 below shift up a version):
 
-- **`iafdb_bank` 1.3** (audit-report sidecar pointer) — pairs with the per-record audit
-  reports (Phase 1.5). Ships **unset** in the Wave-1 re-pin (B11a); the report generator
-  that populates it is Wave-2 work (B11b). The sidecar itself stays **unschema'd** for 1.5
-  — an `iafdb_bank_run_record` schema, mirroring `noise_bank_run_record`, waits for a later
-  contracts wave once the sidecar's shape has stabilized after first use.
-- **`noise_bank` 1.1** (`bank_id` HDF5 root attr) — **B20, Phase 1.5, Wave 1.** Brings the
-  noise bank up to the cross-artifact-linkage baseline the other banks already carry: the id
-  moves onto the bank itself instead of riding only on the `noise_bank_run_record` sidecar.
-  Additive; the sidecar keeps carrying it too, so consumers can migrate at their own pace.
-  Ships in the same re-pin as `iafdb_bank` 1.3 above.
+- **`iafdb_bank_run_record` (new schema)** — the `--report` sidecar ships as
+  **documented-but-unvalidated JSON** carrying a `report_version` string, per CL-026. The
+  trigger for schema'ing it is a **second consumer**: the first is the methods paper, and
+  freezing a shape nobody has read buys nothing. The moment anything other than a human
+  reads the file, it is load-bearing and belongs in egm-contracts like every other
+  cross-repo artifact.
+- **`iafdb_bank` — per-run-type field applicability (FB-30).** The schema requires three
+  fields that do not apply to every run type, each currently satisfied with a `+inf`
+  sentinel: `peak_to_peak_mv` (not computed for single-activation windows, CL-149),
+  `hop_ms` (no stride in activation mode, CL-151), and `calibration_target_qrs_pp_mv` (no
+  target under `method: none`, CL-154). The general fix is conditional requirement by run
+  type rather than three sentinels. Deferred out of 1.5 deliberately — the sentinels are
+  honest and readable, and a schema restructure is its own wave.
 - **`noise_bank` 1.2** (`calibration_scalar` per-trace column) — pairs with noise-side
   opt-in calibration, below. Unscheduled; shifted up a version by B20.
 - **`noise_bank_run_record` 1.2** (`per_trace_provenance.lead`) — pairs with the
@@ -122,7 +118,20 @@ below shift up a version):
 
 ## Known issues
 
-None open.
+- **`refractory_ms` has no feedback column.** The `--report` yield funnel starts at the
+  detector's *output*: `detect_activation_train` returns only its final index array, so the
+  candidate count before refractory suppression is not recoverable through the current
+  egm-signal API. Every other stage's drops are counted and attributed; merged activations
+  are not. Raised as **CL-159** with three possible shapes, one of which is "leave it, and
+  iafdb documents the gap as permanent". Workaround: sweep `refractory_ms` and watch the
+  activation count move.
+- **The minimal `method: none` config lands on a warned pairing.** `threshold.mode` defaults
+  to `absolute`, so a config that sets only `calibration.method: none` gets a fixed mV cut on
+  uncalibrated input — which selects a different amplitude tier in every record. It warns
+  (`ConfigWarning`) rather than raising, since thresholding the recorded scale is legitimate,
+  but the *default* combination being the warned one is backwards. Changing a threshold
+  default changes what banks get produced, so it is a policy call above this repo; flagged in
+  CL-158 for whenever selection defaults are revisited.
 
 ## Won't-do (out of scope, but documented to save the question)
 
@@ -139,8 +148,11 @@ None open.
 
 ## Open architectural questions for later
 
-- **Should the healthy-side producer grow a sidecar?** Inline per-trace provenance is enough
-  today; the boundary is "when the run-time config has more knobs than the schema can carry."
+- ~~**Should the healthy-side producer grow a sidecar?**~~ **Answered in Phase 1.5: yes.**
+  The stated trigger — "when the run-time config has more knobs than the schema can carry" —
+  arrived with activation mode's dozen detection settings and three per-window drop reasons.
+  `--report` (B11b) is that sidecar. Kept here rather than deleted because the *criterion*
+  turned out to be the right one and is worth reusing.
 - **A shared `BaseRecord` between IAFDB and future datasets?** `IAFDBRecord` satisfies the
   egm-signal `Record` Protocol structurally; a concrete base is weaker than it looks since
   the Protocol already handles the polymorphism.

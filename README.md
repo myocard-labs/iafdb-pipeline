@@ -1,6 +1,6 @@
 # myocard-iafdb-pipeline
 
-> PhysioNet IAFDB producer for the myocard-labs intracardiac-EGM stack. Downloads the dataset, calibrates and band-passes the signal, slices bipolar segments, and writes HDF5 banks plus JSON provenance sidecars.
+> PhysioNet IAFDB producer for the myocard-labs intracardiac-EGM stack. Downloads the dataset, band-passes and optionally calibrates the signal, slices bipolar segments by fixed stride or detected activation, and writes HDF5 banks plus JSON provenance sidecars.
 
 Part of the [myocard-labs](https://github.com/myocard-labs) cardiac signal-processing toolkit.
 
@@ -10,7 +10,7 @@ Part of the [myocard-labs](https://github.com/myocard-labs) cardiac signal-proce
 
 [PhysioNet IAFDB](https://physionet.org/content/iafdb/1.0.0/) — the Intracardiac Atrial Fibrillation Database — is one of the few openly available intracardiac bipolar EGM datasets. It carries 32 records from 8 patients across 4 catheter placements (SVC, IVC, TVA, AFW), sampled at 1 kHz, with mixed surface-ECG complements per record. It's the in-vivo anchor the myocard-labs project uses to sanity-check the fibrosis classifier against real recordings — a label-free diagnostic, since IAFDB carries no fibrosis labels to score against.
 
-`myocard-iafdb-pipeline` is the IAFDB-specific producer: it knows about PhysioNet's URL layout, the IAFDB channel conventions, and the dataset's quirks (mixed surface leads, no session timestamps, uncalibrated amplitudes). It hands the resulting calibrated segments to [`myocard-egm-data`](https://github.com/myocard-labs/egm-data) for HDF5 writing, against schemas owned by [`myocard-egm-contracts`](https://github.com/myocard-labs/egm-contracts), using DSP primitives from [`myocard-egm-signal`](https://github.com/myocard-labs/egm-signal).
+`myocard-iafdb-pipeline` is the IAFDB-specific producer: it knows about PhysioNet's URL layout, the IAFDB channel conventions, and the dataset's quirks (mixed surface leads, no session timestamps, uncalibrated amplitudes). It hands the resulting segments to [`myocard-egm-data`](https://github.com/myocard-labs/egm-data) for HDF5 writing, against schemas owned by [`myocard-egm-contracts`](https://github.com/myocard-labs/egm-contracts), using DSP primitives from [`myocard-egm-signal`](https://github.com/myocard-labs/egm-signal).
 
 What this repo does NOT do: HDF5 I/O (egm-data owns it), DSP primitives like filtering / calibration / segment extraction (egm-signal owns them), schema definitions (egm-contracts owns them), or classification (egm-classifier owns it). The split lets the producer stay focused on one job — converting IAFDB into bank-format artifacts that satisfy the project-wide contracts.
 
@@ -58,7 +58,11 @@ Four console scripts are installed:
 | `iafdb-export-bank` | Build an `iafdb_bank.h5` (optionally also a paired ClassifierBank). |
 | `iafdb-export-noise-bank` | Build a `noise_bank.h5` + `noise_bank_run_record.json`. |
 
-The two `export` commands are config-driven; the YAML schema and a per-command walkthrough live in [`docs/usage.md`](docs/usage.md). Pre-written configs covering the Sánchez sinus-rhythm 0.5 mV threshold, the Kosiuk AF-adjusted 0.2 mV threshold, an unfiltered pretraining mode, a paired-ClassifierBank mode, and two noise-side strategies (percentile, absolute) live under [`examples/`](examples/).
+The two `export` commands are config-driven; the YAML schema and a per-command walkthrough live in [`docs/usage.md`](docs/usage.md). Nine annotated configs live under [`examples/`](examples/), covering both windowing modes (fixed-stride and activation-anchored), the threshold strategies (absolute mV, per-record percentile, none), the ClassifierBank output, and the two noise-side strategies.
+
+`iafdb-export-bank` also takes `--report PATH`, which writes a JSON audit sidecar recording how each record was treated — per-record calibration provenance and the per-channel kept/dropped breakdown, including for records that contributed nothing.
+
+**Calibration is an explicit choice, not a default.** `calibration.method` is a required config key: `none` emits the recorded nominal mV unchanged, `r_wave_anchoring` applies a per-record scalar derived from a surface-ECG QRS. `none` is what most shipped examples use — anchoring is non-standard for intracardiac EGM and is retained only under a narrow premise. The reasoning, the measurement behind it and when anchoring is still the right call are in [`project/architecture.md`](project/architecture.md) → "Calibration".
 
 ---
 
@@ -83,9 +87,13 @@ result = export_bank(
     output_path=Path("out/iafdb_healthy_v1.h5"),
     records=records,
     threshold=AbsoluteThreshold(0.2),
+    # Required, no default. `none` needs no target and emits unscaled
+    # nominal mV; an absolute mV threshold is one of the few places
+    # anchoring still earns its keep. See project/architecture.md.
+    calibration_method="r_wave_anchoring",
+    target_qrs_pp_mv=1.0,
     window_ms=512.0,
     hop_ms=256.0,
-    target_qrs_pp_mv=1.0,
     overwrite=True,
 )
 print(result.n_segments, result.source_records)

@@ -2,7 +2,11 @@
 
 **Repo:** iafdb-pipeline · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 10/12 steps done — Wave 1 complete (S0 B22, S1 IAF3, S5+S7 the `theory.md` graduation) and Wave 2 complete (S2–S4 IAF1, S6 B11b). Remaining: **S8 phase-exit** only. S9 + S10 + S11 shipped.
+**Status:** COMPLETE · **Progress:** 12/12 steps done — Wave 1 complete (S0 B22, S1 IAF3, S5+S7 the `theory.md` graduation) and Wave 2 complete (S2–S4 IAF1, S6 B11b). All steps shipped. Three were unplanned (S9, S10, S11), all arising from Daniel's review of S6.
+**"Complete" here means implementation, not released.** The PR into `release` is deliberately held
+until Phase 1.5 implementation lands across every repo: iafdb-pipeline is imported by nothing, and
+the phase has already turned up several cross-repo changes mid-implementation (CL-149, CL-151,
+CL-154, CL-159), so batching the release gate avoids tagging against a moving constellation.
 **Repo estimate:** **12–23.75 h active · 11 points** across B22 · IAF1 · B20 · B11a · B11b and the
 `theory.md` trim. Cold-start estimates are by **analogy**, not arithmetic —
 `estimation_ledger.csv` is empty, so there is no time-per-point rate to multiply by yet. Ranges are
@@ -340,12 +344,34 @@ Confirmed — and the confusion had a second source underneath.
   link to its new home; the doc still reads as a continuous argument rather than a set of stubs.
 - **Depends on:** **egm-signal v0.4.0** tagged with its `docs/theory.md` present (CL-031).
 
-### S8 — Docs + phase-exit ☐ (1–2 h)
+### S8 — Docs + phase-exit ✅ (2026-08-10)
 
-- **Change:** `roadmap.md` drops the now-shipped Phase 1.5 items; `CHANGELOG.md` gets the
-  `[Unreleased]` summary; `docs/usage.md` documents the activation mode end to end;
-  `project/architecture.md` gains the second extraction path and the sidecar asymmetry note.
-- **Verify:** the full `intracardiac-platform/project/pr_checklist.md` run passes.
+- **Change:** `roadmap.md` trimmed of everything Phase 1.5 shipped, with newly-discovered items
+  added; `README.md` audited (it had drifted — see below); `CHANGELOG.md`, `docs/usage.md`,
+  `docs/theory.md` and `project/architecture.md` were kept current step-by-step rather than in a
+  batch at the end, so this step mostly verified rather than wrote them.
+- **Two things the audit caught that the step description did not anticipate:**
+  - **The README's programmatic example no longer ran.** It predates S9's required
+    `calibration_method`, so a reader copying it got a `TypeError`. Fixed, and the snippet is now
+    *executed against real IAFDB data* as part of the check rather than eyeballed — it exports 459
+    segments from `iaf1_svc`. The README had not been touched all phase, which is exactly how a
+    quickstart rots.
+  - **The roadmap proposed doing on the noise side what Phase 1.5 just demoted on the trace side.**
+    "Noise-side opt-in calibration" was written to add R-wave anchoring to the noise producer. Left
+    as-is that would have re-imported a method we stepped back from, in the one path that never
+    needed it (its percentile default is already scale-invariant). Re-scoped rather than deleted,
+    with the question to answer first written down.
+- **Roadmap additions:** two entries under *Known issues* (which previously read "None open") —
+  the `refractory_ms` feedback gap (CL-159) and the `threshold.mode: absolute` default landing on
+  the warned pairing with `method: none`; plus the FB-30 sentinel sweep and the
+  `iafdb_bank_run_record` schema trigger under schema bumps. The "should the healthy-side producer
+  grow a sidecar?" open question is marked answered — its stated trigger is exactly what arrived.
+- **Verify:** full `pr_checklist.md` run — §1 ruff/mypy/pytest green (147 tests); §2 code placement
+  clean (no `h5py`, no `scipy`, no `torch` in `src/`, all bank writes through egm-data); §3 docs
+  synced; §4 re-pin cascade recorded in the CHANGELOG and no fleet consumer asserts on
+  `iafdb_bank.calibration_method` (the two `calibration_method="none"` hits elsewhere are
+  `noise_bank_run_record` builders, which have always allowed it); §5 hygiene clean, `src/` fully
+  tracked; §6 full diff read.
 - **Depends on:** all prior steps.
 
 ## Complexity + estimate
